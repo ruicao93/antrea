@@ -100,6 +100,11 @@ type Client interface {
 	// are removed from PolicyRule.From, else from PolicyRule.To.
 	DeletePolicyRuleAddress(ruleID uint32, addrType types.AddressType, addresses []types.Address) error
 
+	// InstallExternalFlows sets up flows to enable Pods to communicate to the external IP addresses. The corresponding
+	// OpenFlow entries include: 1) identify the packets from local Pods to the external IP address, 2) mark the traffic
+	// in the connection tracking context, and 3) SNAT the packets with Node IP.
+	InstallExternalFlows(nodeIP net.IP, localSubnet net.IPNet) error
+
 	// Disconnect disconnects the connection between client and OFSwitch.
 	Disconnect() error
 
@@ -333,6 +338,15 @@ func (c *client) Initialize(roundInfo types.RoundInfo, nodeConfig *config.NodeCo
 	}
 
 	return connCh, c.initialize()
+}
+
+func (c *client) InstallExternalFlows(nodeIP net.IP, localSubnet net.IPNet) error {
+	flows := c.snatFlows(config.UplinkOFPort, config.BridgeOFPort, nodeIP, cookie.SNAT)
+	flows = append(flows, c.l3ToExternalFlows(nodeIP, localSubnet, config.BridgeOFPort, cookie.SNAT)...)
+	if err := c.flowOperations.AddAll(flows); err != nil {
+		return fmt.Errorf("failed to install flows for external communication: %v", err)
+	}
+	return nil
 }
 
 func (c *client) ReplayFlows() {

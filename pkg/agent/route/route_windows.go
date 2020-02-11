@@ -25,6 +25,7 @@ import (
 	"k8s.io/klog"
 
 	"github.com/vmware-tanzu/antrea/pkg/agent/config"
+	"github.com/vmware-tanzu/antrea/pkg/agent/util"
 )
 
 type Client struct {
@@ -48,6 +49,15 @@ func NewClient(hostGateway string, serviceCIDR *net.IPNet, encapMode config.Traf
 // Service LoadBalancing is provided by OpenFlow.
 func (c *Client) Initialize(nodeConfig *config.NodeConfig) error {
 	c.nodeConfig = nodeConfig
+	// Enable IP-Forwarding on the interface of OVS bridge, and the host networking stack can be used to forward the
+	// SNAT packet from local Pods. The SNAT packet is output to the OVS bridge interface with the Node's IP as the
+	// the src IP, the external address as the dst IP, and the gw0's MAC as the dst MAC. After the bridge interface gets
+	// the packet, it forwards the packet on the host networking, and the packet's dst MAC could be reset with a correct
+	// one. Then the packet is sent back to OVS from the bridge Interface, and the OpenFlow entries will output the packet
+	// to the uplink interface directly.
+	if err := util.EnableIPForwarding(nodeConfig.BridgeName); err != nil {
+		return err
+	}
 	return nil
 }
 
