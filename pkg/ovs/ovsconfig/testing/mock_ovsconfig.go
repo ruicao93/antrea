@@ -122,6 +122,21 @@ func (mr *MockOVSBridgeClientMockRecorder) CreateTunnelPortExt(arg0, arg1, arg2,
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateTunnelPortExt", reflect.TypeOf((*MockOVSBridgeClient)(nil).CreateTunnelPortExt), arg0, arg1, arg2, arg3, arg4, arg5)
 }
 
+// CreateUplinkPort mocks base method
+func (m *MockOVSBridgeClient) CreateUplinkPort(arg0, arg1 string, arg2 int32, arg3 map[string]interface{}) (string, ovsconfig.Error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CreateUplinkPort", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(ovsconfig.Error)
+	return ret0, ret1
+}
+
+// CreateUplinkPort indicates an expected call of CreateUplinkPort
+func (mr *MockOVSBridgeClientMockRecorder) CreateUplinkPort(arg0, arg1, arg2, arg3 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateUplinkPort", reflect.TypeOf((*MockOVSBridgeClient)(nil).CreateUplinkPort), arg0, arg1, arg2, arg3)
+}
+
 // Delete mocks base method
 func (m *MockOVSBridgeClient) Delete() ovsconfig.Error {
 	m.ctrl.T.Helper()
@@ -253,6 +268,34 @@ func (mr *MockOVSBridgeClientMockRecorder) GetPortList() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetPortList", reflect.TypeOf((*MockOVSBridgeClient)(nil).GetPortList))
 }
 
+// GetUplinkName mocks base method
+func (m *MockOVSBridgeClient) GetUplinkName() string {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetUplinkName")
+	ret0, _ := ret[0].(string)
+	return ret0
+}
+
+// GetUplinkName indicates an expected call of GetUplinkName
+func (mr *MockOVSBridgeClientMockRecorder) GetUplinkName() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUplinkName", reflect.TypeOf((*MockOVSBridgeClient)(nil).GetUplinkName))
+}
+
+// SetDatapathID mocks base method
+func (m *MockOVSBridgeClient) SetDatapathID(arg0 string) ovsconfig.Error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetDatapathID", arg0)
+	ret0, _ := ret[0].(ovsconfig.Error)
+	return ret0
+}
+
+// SetDatapathID indicates an expected call of SetDatapathID
+func (mr *MockOVSBridgeClientMockRecorder) SetDatapathID(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetDatapathID", reflect.TypeOf((*MockOVSBridgeClient)(nil).SetDatapathID), arg0)
+}
+
 // SetExternalIDs mocks base method
 func (m *MockOVSBridgeClient) SetExternalIDs(arg0 map[string]interface{}) ovsconfig.Error {
 	m.ctrl.T.Helper()
@@ -279,4 +322,16 @@ func (m *MockOVSBridgeClient) SetInterfaceMTU(arg0 string, arg1 int) error {
 func (mr *MockOVSBridgeClientMockRecorder) SetInterfaceMTU(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetInterfaceMTU", reflect.TypeOf((*MockOVSBridgeClient)(nil).SetInterfaceMTU), arg0, arg1)
+}
+
+// SetUplinkName mocks base method
+func (m *MockOVSBridgeClient) SetUplinkName(arg0 string) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetUplinkName", arg0)
+}
+
+// SetUplinkName indicates an expected call of SetUplinkName
+func (mr *MockOVSBridgeClientMockRecorder) SetUplinkName(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetUplinkName", reflect.TypeOf((*MockOVSBridgeClient)(nil).SetUplinkName), arg0)
 }

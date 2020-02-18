@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// +build windows
+
 package util
 
 import (
@@ -32,6 +34,7 @@ const (
 	ContainerVNICPrefix = "vEthernet"
 	HNSNetworkType      = "Transparent"
 	LocalHNSNetwork     = "antrea-hnsnetwork"
+	NetAdapterEnvKey    = "UPLINK_NET_ADAPTER"
 	OVSExtensionID      = "583CC151-73EC-4A6A-8B47-578297AD7623"
 )
 
@@ -102,6 +105,14 @@ func RemoveManagementInterface(networkName string) error {
 		i++
 	}
 	return err
+}
+
+// ConfigureMacAddress set specified MAC address on interface
+func ConfigureMacAddress(ifaceName string, macConfig net.HardwareAddr) error {
+	macAddr := strings.Replace(macConfig.String(), ":", "", -1)
+	cmd := fmt.Sprintf("Set-NetAdapterAdvancedProperty -Name %s -RegistryKeyword NetworkAddress -RegistryValue %s",
+		ifaceName, macAddr)
+	return invokePSCommand(cmd)
 }
 
 // WindowsHyperVInstalled checks if the Hyper-V feature is enabled on the host.
@@ -200,6 +211,9 @@ func SetLinkUp(name string) (net.HardwareAddr, int, error) {
 	// Set host gateway interface up.
 	if err := EnableHostInterface(name); err != nil {
 		klog.Errorf("Failed to set host link for %s up: %v", name, err)
+		if strings.Contains(err.Error(), "ObjectNotFound") {
+			return nil, 0, newLinkNoteFoundError(name)
+		}
 		return nil, 0, err
 	}
 
@@ -311,4 +325,28 @@ func FirewallRuleExists(name string) (bool, error) {
 		return false, err
 	}
 	return result != "", nil
+}
+
+func RemoveIPv4Addrs(ifaceName string) error {
+	cmd := fmt.Sprintf("Remove-NetIPAddress -Confirm:$false -AddressFamily IPv4 -InterfaceAlias %s", ifaceName)
+	return invokePSCommand(cmd)
+}
+
+func GetAdapterIPv4Addr(adapterName string) (*net.IPNet, error) {
+	adapter, err := net.InterfaceByName(adapterName)
+	if err != nil {
+		return nil, err
+	}
+	addrs, err := adapter.Addrs()
+	if err != nil {
+		return nil, err
+	}
+	for _, ip := range addrs {
+		if ip, ok := ip.(*net.IPNet); ok {
+			if ip.IP.To4() != nil {
+				return ip, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("failed to find a valid IP on adapter %s", adapterName)
 }

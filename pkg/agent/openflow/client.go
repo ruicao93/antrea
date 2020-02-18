@@ -30,15 +30,18 @@ const maxRetryForOFSwitch = 5
 
 // Client is the interface to program OVS flows for entity connectivity of Antrea.
 type Client interface {
-	// Initialize sets up all basic flows on the specific OVS bridge. It returns a channel which
+	// InstallBasicFlows sets up all basic flows on the specific OVS bridge. It returns a channel which
 	// is used to notify the caller in case of a reconnection, in which case ReplayFlows should
 	// be called to ensure that the set of OVS flows is correct. All flows programmed in the
 	// switch which match the current round number will be deleted before any new flow is
 	// installed.
-	Initialize(roundInfo types.RoundInfo, config *config.NodeConfig, encapMode config.TrafficEncapModeType, gatewayOFPort uint32) (<-chan struct{}, error)
+	InstallBasicFlows(config *config.NodeConfig, encapMode config.TrafficEncapModeType, gatewayOFPort uint32) error
 
 	// InstallGatewayFlows sets up flows related to an OVS gateway port, the gateway must exist.
 	InstallGatewayFlows(gatewayAddr net.IP, gatewayMAC net.HardwareAddr, gatewayOFPort uint32) error
+
+	// InstallHostNetworkFlows installs Openflow entries for uplink/bridge to support host networking.
+	InstallHostNetworkFlows(uplinkPort uint32, bridgeLocalPort uint32) error
 
 	// InstallClusterServiceCIDRFlows sets up the appropriate flows so that traffic can reach
 	// the different Services running in the Cluster. This method needs to be invoked once with
@@ -104,6 +107,15 @@ type Client interface {
 	// OpenFlow entries include: 1) identify the packets from local Pods to the external IP address, 2) mark the traffic
 	// in the connection tracking context, and 3) SNAT the packets with Node IP.
 	InstallExternalFlows(nodeIP net.IP, localSubnet net.IPNet) error
+
+	// GetRoundInfo returns current round info.
+	GetRoundInfo() types.RoundInfo
+
+	// GetConnCh return channel which is used to notify agent OFSwitch is connected.
+	GetConnCh() <-chan struct{}
+
+	// Connect connects client to OFSwitch.
+	Connect(roundInfo types.RoundInfo) error
 
 	// Disconnect disconnects the connection between client and OFSwitch.
 	Disconnect() error
@@ -282,7 +294,12 @@ func (c *client) InstallDefaultTunnelFlows(tunnelOFPort uint32) error {
 	return nil
 }
 
-func (c *client) initialize() error {
+func (c *client) InstallHostNetworkFlows(uplinkPort uint32, bridgeLocalPort uint32) error {
+	flows := c.hostNetworkForwardFlow(uplinkPort, bridgeLocalPort, cookie.Default)
+	return c.flowOperations.AddAll(flows)
+}
+
+func (c *client) installBasicFlows() error {
 	if err := c.flowOperations.AddAll(c.defaultFlows()); err != nil {
 		return fmt.Errorf("failed to install default flows: %v", err)
 	}
@@ -312,20 +329,17 @@ func (c *client) initialize() error {
 	return nil
 }
 
-func (c *client) Initialize(roundInfo types.RoundInfo, nodeConfig *config.NodeConfig, encapMode config.TrafficEncapModeType, gatewayOFPort uint32) (<-chan struct{}, error) {
-	c.nodeConfig = nodeConfig
-	c.encapMode = encapMode
-	c.gatewayPort = gatewayOFPort
-
+func (c *client) Connect(roundInfo types.RoundInfo) error {
 	// Initiate connections to target OFswitch, and create tables on the switch.
 	connCh := make(chan struct{})
 	if err := c.bridge.Connect(maxRetryForOFSwitch, connCh); err != nil {
-		return nil, err
+		return err
 	}
 
 	// Ignore first notification, it is not a "reconnection".
 	<-connCh
 
+	c.connCh = connCh
 	c.roundInfo = roundInfo
 	c.cookieAllocator = cookie.NewAllocator(roundInfo.RoundNum)
 
@@ -334,10 +348,25 @@ func (c *client) Initialize(roundInfo types.RoundInfo, nodeConfig *config.NodeCo
 	// number (incrementing the round number happens once we are satisfied that stale flows from
 	// the previous round have been deleted).
 	if err := c.deleteFlowsByRoundNum(roundInfo.RoundNum); err != nil {
-		return nil, fmt.Errorf("error when deleting exiting flows for current round number: %v", err)
+		return fmt.Errorf("error when deleting exiting flows for current round number: %v", err)
 	}
 
-	return connCh, c.initialize()
+	return nil
+}
+
+func (c *client) InstallBasicFlows(nodeConfig *config.NodeConfig, encapMode config.TrafficEncapModeType, gatewayOFPort uint32) error {
+	c.nodeConfig = nodeConfig
+	c.encapMode = encapMode
+	c.gatewayPort = gatewayOFPort
+	return c.installBasicFlows()
+}
+
+func (c *client) GetRoundInfo() types.RoundInfo {
+	return c.roundInfo
+}
+
+func (c *client) GetConnCh() <-chan struct{} {
+	return c.connCh
 }
 
 func (c *client) InstallExternalFlows(nodeIP net.IP, localSubnet net.IPNet) error {
@@ -353,7 +382,7 @@ func (c *client) ReplayFlows() {
 	c.replayMutex.Lock()
 	defer c.replayMutex.Unlock()
 
-	if err := c.initialize(); err != nil {
+	if err := c.installBasicFlows(); err != nil {
 		klog.Errorf("Error during flow replay: %v", err)
 	}
 

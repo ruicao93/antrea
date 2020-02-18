@@ -97,7 +97,10 @@ func (i *Initializer) setupOVSBridge() error {
 		klog.Error("Failed to create OVS bridge: ", err)
 		return err
 	}
-	i.nodeConfig.BridgeName = i.ovsBridgeClient.GetBridgeName()
+
+	if err := i.prepareOVSBridge(); err != nil {
+		return err
+	}
 
 	// Initialize interface cache
 	if err := i.initInterfaceStore(); err != nil {
@@ -105,6 +108,22 @@ func (i *Initializer) setupOVSBridge() error {
 	}
 
 	if err := i.setupDefaultTunnelInterface(config.DefaultTunPortName); err != nil {
+		return err
+	}
+
+	roundInfo := getRoundInfo(i.ovsBridgeClient)
+	if err := i.ofClient.Connect(roundInfo); err != nil {
+		return err
+	}
+
+	// On windows platform, hostnetwork flows are needed to be set to ensure host can
+	// communicate with outside.
+	if err := i.initHostNetworkFlow(); err != nil {
+		klog.Errorf("Failed to setup openflow entires for host network: %v", err)
+		return nil
+	}
+
+	if err := i.initNodeLocalConfig(); err != nil {
 		return err
 	}
 
@@ -127,6 +146,7 @@ func (i *Initializer) initInterfaceStore() error {
 	}
 
 	ifaceList := make([]*interfacestore.InterfaceConfig, 0, len(ovsPorts))
+	uplinkIfName := i.ovsBridgeClient.GetUplinkName()
 	for index := range ovsPorts {
 		port := &ovsPorts[index]
 		ovsPort := &interfacestore.OVSPortConfig{
@@ -139,6 +159,12 @@ func (i *Initializer) initInterfaceStore() error {
 				Type:          interfacestore.GatewayInterface,
 				InterfaceName: port.Name,
 				OVSPortConfig: ovsPort}
+		case port.Name == uplinkIfName:
+			intf = &interfacestore.InterfaceConfig{
+				Type:          interfacestore.UplinkInterface,
+				InterfaceName: port.Name,
+				OVSPortConfig: ovsPort,
+			}
 		case port.IFType == ovsconfig.VXLANTunnel:
 			fallthrough
 		case port.IFType == ovsconfig.GeneveTunnel:
@@ -160,19 +186,15 @@ func (i *Initializer) initInterfaceStore() error {
 	return nil
 }
 
-// Initialize sets up agent initial configurations.
+// InstallBasicFlows sets up agent initial configurations.
 func (i *Initializer) Initialize() error {
 	klog.Info("Setting up node network")
 
-	if err := i.initNodeLocalConfig(); err != nil {
+	if err := i.setupOVSBridge(); err != nil {
 		return err
 	}
 
 	if err := i.readIPSecPSK(); err != nil {
-		return err
-	}
-
-	if err := i.setupOVSBridge(); err != nil {
 		return err
 	}
 
@@ -229,7 +251,6 @@ func persistRoundNum(num uint64, bridgeClient ovsconfig.OVSBridgeClient, interva
 // described above, We guarantee that at most two rounds of flows exist in the switch at any given
 // time.
 func (i *Initializer) initOpenFlowPipeline() error {
-	roundInfo := getRoundInfo(i.ovsBridgeClient)
 	gateway, ok := i.ifaceStore.GetInterface(i.hostGateway)
 	if !ok {
 		return fmt.Errorf("cannot find local gateway %s from interface store", i.hostGateway)
@@ -237,11 +258,13 @@ func (i *Initializer) initOpenFlowPipeline() error {
 	gatewayOFPort := uint32(gateway.OFPort)
 
 	// Setup all basic flows.
-	ofConnCh, err := i.ofClient.Initialize(roundInfo, i.nodeConfig, i.networkConfig.TrafficEncapMode, gatewayOFPort)
+	err := i.ofClient.InstallBasicFlows(i.nodeConfig, i.networkConfig.TrafficEncapMode, gatewayOFPort)
 	if err != nil {
 		klog.Errorf("Failed to initialize openflow client: %v", err)
 		return err
 	}
+	ofConnCh := i.ofClient.GetConnCh()
+	roundInfo := i.ofClient.GetRoundInfo()
 
 	// Setup flow entries for gateway interface, including classifier, skip spoof guard check,
 	// L3 forwarding and L2 forwarding
@@ -426,6 +449,9 @@ func (i *Initializer) setupDefaultTunnelInterface(tunnelPortName string) error {
 // initNodeLocalConfig retrieves node's subnet CIDR from node.spec.PodCIDR, which is used for IPAM and setup
 // host gateway interface.
 func (i *Initializer) initNodeLocalConfig() error {
+	//if i.nodeConfig != nil {
+	//	return nil
+	//}
 	nodeName, err := getNodeName()
 	if err != nil {
 		return err
@@ -446,7 +472,7 @@ func (i *Initializer) initNodeLocalConfig() error {
 	}
 
 	if i.networkConfig.TrafficEncapMode.IsNetworkPolicyOnly() {
-		i.nodeConfig = &config.NodeConfig{Name: nodeName, NodeIPAddr: localAddr}
+		i.nodeConfig = &config.NodeConfig{Name: nodeName, NodeIPAddr: localAddr, BridgeName: i.ovsBridgeClient.GetBridgeName()}
 		return nil
 	}
 
@@ -462,7 +488,7 @@ func (i *Initializer) initNodeLocalConfig() error {
 		return err
 	}
 
-	i.nodeConfig = &config.NodeConfig{Name: nodeName, PodCIDR: localSubnet, NodeIPAddr: localAddr}
+	i.nodeConfig = &config.NodeConfig{Name: nodeName, PodCIDR: localSubnet, NodeIPAddr: localAddr, BridgeName: i.ovsBridgeClient.GetBridgeName()}
 	return nil
 }
 

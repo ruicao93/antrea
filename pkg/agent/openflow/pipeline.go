@@ -142,6 +142,8 @@ type client struct {
 	nodeConfig  *config.NodeConfig
 	encapMode   config.TrafficEncapModeType
 	gatewayPort uint32 // OVSOFPort number
+	// channel to notify agent OFSwitch is connected.
+	connCh chan struct{}
 }
 
 func (c *client) Add(flow binding.Flow) error {
@@ -215,6 +217,21 @@ func (c *client) podClassifierFlow(podOFPort uint32, category cookie.Category) b
 		Action().ResubmitToTable(classifierTable.GetNext()).
 		Cookie(c.cookieAllocator.Request(category).Raw()).
 		Done()
+}
+
+func (c *client) hostNetworkForwardFlow(uplinkPort uint32, bridgeLocalPort uint32, category cookie.Category) (flows []binding.Flow) {
+	classifierTable := c.pipeline[classifierTable]
+	flows = []binding.Flow{
+		classifierTable.BuildFlow(priorityLow).MatchInPort(uplinkPort).
+			Action().Output(int(bridgeLocalPort)).
+			Cookie(c.cookieAllocator.Request(category).Raw()).
+			Done(),
+		classifierTable.BuildFlow(priorityNormal).MatchInPort(bridgeLocalPort).
+			Action().Output(int(uplinkPort)).
+			Cookie(c.cookieAllocator.Request(category).Raw()).
+			Done(),
+	}
+	return flows
 }
 
 // connectionTrackFlows generates flows that redirect traffic to ct_zone and handle traffic according to ct_state:

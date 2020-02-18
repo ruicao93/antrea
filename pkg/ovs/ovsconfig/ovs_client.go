@@ -17,6 +17,7 @@ package ovsconfig
 import (
 	"fmt"
 	"net"
+	"runtime"
 	"time"
 
 	"github.com/TomCodeLV/OVSDB-golang-lib/pkg/dbtransaction"
@@ -32,6 +33,7 @@ type OVSBridge struct {
 	name         string
 	datapathType string
 	uuid         string
+	uplinkName   string
 }
 
 type OVSPortData struct {
@@ -92,7 +94,7 @@ func NewOVSDBConnectionUDS(address string) (*ovsdb.OVSDB, Error) {
 
 // NewOVSBridge creates and returns a new OVSBridge struct.
 func NewOVSBridge(bridgeName string, ovsDatapathType string, ovsdb *ovsdb.OVSDB) *OVSBridge {
-	return &OVSBridge{ovsdb, bridgeName, ovsDatapathType, ""}
+	return &OVSBridge{ovsdb, bridgeName, ovsDatapathType, "", ""}
 }
 
 // Create looks up or creates the bridge. If the bridge with name bridgeName
@@ -170,12 +172,42 @@ func (br *OVSBridge) create() Error {
 		Row:   bridge,
 	})
 
-	mutateSet := helpers.MakeOVSDBSet(map[string]interface{}{
+	// On windows platform OVS bridge local port and interface is needed for host networking.
+	if runtime.GOOS == "windows" {
+		interf := Interface{
+			Name: br.name,
+			Type: "internal",
+		}
+		ifNamedUUID := tx.Insert(dbtransaction.Insert{
+			Table: "Interface",
+			Row:   interf,
+		})
+		port := Port{
+			Name: br.name,
+			Interfaces: helpers.MakeOVSDBSet(map[string]interface{}{
+				"named-uuid": []string{ifNamedUUID},
+			}),
+		}
+		portNamedUUID := tx.Insert(dbtransaction.Insert{
+			Table: "Port",
+			Row:   port,
+		})
+		portMutateSet := helpers.MakeOVSDBSet(map[string]interface{}{
+			"named-uuid": []string{portNamedUUID},
+		})
+		tx.Mutate(dbtransaction.Mutate{
+			Table:     "Bridge",
+			Mutations: [][]interface{}{{"ports", "insert", portMutateSet}},
+			Where:     [][]interface{}{{"name", "==", br.name}},
+		})
+	}
+
+	brMutateSet := helpers.MakeOVSDBSet(map[string]interface{}{
 		"named-uuid": []string{namedUUID},
 	})
 	tx.Mutate(dbtransaction.Mutate{
 		Table:     "Open_vSwitch",
-		Mutations: [][]interface{}{{"bridges", "insert", mutateSet}},
+		Mutations: [][]interface{}{{"bridges", "insert", brMutateSet}},
 	})
 
 	res, err, temporary := tx.Commit()
@@ -242,6 +274,49 @@ func (br *OVSBridge) SetExternalIDs(externalIDs map[string]interface{}) Error {
 		return NewTransactionError(err, temporary)
 	}
 	return nil
+}
+
+// SetDatapathID sets the provided datapath ID to the bridge.
+// If datapath ID is not configured, reconfigure bridge (add/delete port or set different Mac address for local port)
+// will change its datapath ID. And the change of datapath ID and interrupt OpenFlow connection.
+func (br *OVSBridge) SetDatapathID(datapathID string) Error {
+	tx := br.ovsdb.Transaction(openvSwitchSchema)
+	otherConfig := map[string]interface{}{"datapath-id": datapathID}
+	tx.Update(dbtransaction.Update{
+		Table: "Bridge",
+		Where: [][]interface{}{{"name", "==", br.name}},
+		Row: map[string]interface{}{
+			"other_config": helpers.MakeOVSDBMap(otherConfig),
+		},
+	})
+	_, err, temporary := tx.Commit()
+	if err != nil {
+		klog.Error("Transaction failed", err)
+		return NewTransactionError(err, temporary)
+	}
+	return nil
+}
+
+func (br *OVSBridge) GetDatapathID() (string, Error) {
+	tx := br.ovsdb.Transaction(openvSwitchSchema)
+	tx.Select(dbtransaction.Select{
+		Table:   "Bridge",
+		Columns: []string{"datapath_id"},
+		Where:   [][]interface{}{{"name", "==", br.name}},
+	})
+
+	res, err, temporary := tx.Commit()
+	if err != nil {
+		klog.Error("Transaction failed: ", err)
+		return "", NewTransactionError(err, temporary)
+	}
+	datapathID := res[0].Rows[0].(map[string]interface{})["datapath_id"]
+	switch datapathID.(type) {
+	case string:
+		return datapathID.(string), nil
+	default:
+		return "", NewTransactionError(fmt.Errorf("datapath not found"), true)
+	}
 }
 
 // GetPortUUIDList returns UUIDs of all ports on the bridge.
@@ -394,6 +469,12 @@ func ParseTunnelInterfaceOptions(portData *OVSPortData) (net.IP, string) {
 
 	psk = portData.Options["psk"]
 	return remoteIP, psk
+}
+
+// CreateUplinkPort creates uplink port.
+func (br *OVSBridge) CreateUplinkPort(name string, ifDev string, ofPortRequest int32, externalIDs map[string]interface{}) (string, Error) {
+	br.uplinkName = ifDev
+	return br.createPort(name, ifDev, "", ofPortRequest, externalIDs, nil)
 }
 
 // CreatePort creates a port with the specified name on the bridge, and connects
@@ -673,4 +754,8 @@ func (br *OVSBridge) GetOVSVersion() (string, Error) {
 
 func (br *OVSBridge) GetBridgeName() string {
 	return br.name
+}
+
+func (br *OVSBridge) GetUplinkName() string {
+	return br.uplinkName
 }

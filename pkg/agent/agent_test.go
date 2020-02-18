@@ -80,6 +80,7 @@ func TestInitstore(t *testing.T) {
 	mockOVSBridgeClient := ovsconfigtest.NewMockOVSBridgeClient(controller)
 
 	mockOVSBridgeClient.EXPECT().GetPortList().Return(nil, ovsconfig.NewTransactionError(fmt.Errorf("Failed to list OVS ports"), true))
+	mockOVSBridgeClient.EXPECT().GetUplinkName().Return("")
 
 	store := interfacestore.NewInterfaceStore()
 	initializer := newAgentInitializer(mockOVSBridgeClient, store)

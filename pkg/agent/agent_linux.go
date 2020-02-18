@@ -20,3 +20,13 @@ package agent
 func (i *Initializer) setupExternalConnectivity() error {
 	return nil
 }
+
+// prepareOVSBridge returns immediately on Linux.
+func (i *Initializer) prepareOVSBridge() error {
+	return nil
+}
+
+// initHostNetworkFlow returns immediately on Linux.
+func (i *Initializer) initHostNetworkFlow() error {
+	return nil
+}

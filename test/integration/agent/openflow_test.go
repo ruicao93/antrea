@@ -139,8 +139,10 @@ func TestReplayFlowsNetworkPolicyFlows(t *testing.T) {
 	err := ofTestUtils.PrepareOVSBridge(br)
 	require.Nil(t, err, fmt.Sprintf("Failed to prepare OVS bridge: %v", err))
 
-	_, err = c.Initialize(roundInfo, &config1.NodeConfig{}, config1.TrafficEncapModeEncap, config1.HostGatewayOFPort)
-	require.Nil(t, err, "Failed to initialize OFClient")
+	err = c.Connect(roundInfo)
+	require.Nil(t, err, "Failed to connect to OVS bridge")
+	err = c.InstallBasicFlows(&config1.NodeConfig{}, config1.TrafficEncapModeEncap, config1.HostGatewayOFPort)
+	require.Nil(t, err, "Failed to install basic flows")
 
 	defer func() {
 		err = c.Disconnect()
@@ -211,8 +213,10 @@ func testReplayFlows(t *testing.T) {
 }
 
 func testInitialize(t *testing.T, config *testConfig) {
-	if _, err := c.Initialize(roundInfo, &config1.NodeConfig{}, config1.TrafficEncapModeEncap, config1.HostGatewayOFPort); err != nil {
-		t.Errorf("Failed to initialize openflow client: %v", err)
+	err := c.Connect(roundInfo)
+	require.Nil(t, err, "Failed to connect to OVS bridge")
+	if err := c.InstallBasicFlows(&config1.NodeConfig{}, config1.TrafficEncapModeEncap, config1.HostGatewayOFPort); err != nil {
+		t.Errorf("Failed to install basic flows: %v", err)
 	}
 	for _, tableFlow := range prepareDefaultFlows() {
 		ofTestUtils.CheckFlowExists(t, config.bridge, tableFlow.tableID, true, tableFlow.flows)
@@ -292,8 +296,10 @@ func TestNetworkPolicyFlows(t *testing.T) {
 	err := ofTestUtils.PrepareOVSBridge(br)
 	require.Nil(t, err, fmt.Sprintf("Failed to prepare OVS bridge %s", br))
 
-	_, err = c.Initialize(roundInfo, &config1.NodeConfig{}, config1.TrafficEncapModeEncap, config1.HostGatewayOFPort)
-	require.Nil(t, err, "Failed to initialize OFClient")
+	err = c.Connect(roundInfo)
+	require.Nil(t, err, "Failed to connect to OVS bridge")
+	err = c.InstallBasicFlows(&config1.NodeConfig{}, config1.TrafficEncapModeEncap, config1.HostGatewayOFPort)
+	require.Nil(t, err, "Failed to install basic flows")
 
 	defer func() {
 		err = c.Disconnect()
