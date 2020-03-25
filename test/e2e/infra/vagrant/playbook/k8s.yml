@@ -2,8 +2,20 @@
 - hosts: master
   become: true
   roles:
-    - master
+    - linux/master
 - hosts: workers
   become: true
   roles:
-    - worker
+    - linux/worker
+- hosts: worker-windows
+  remote_user: Administrator
+  gather_facts: true
+  become_method: runas
+  any_errors_fatal: true
+  tasks:
+    - import_role:
+        name: windows/requirements
+    - import_role:
+        name: windows/docker
+    - import_role:
+        name: windows/openvswitch

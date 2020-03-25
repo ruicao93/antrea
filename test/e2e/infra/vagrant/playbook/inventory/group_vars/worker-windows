@@ -1,0 +1,29 @@
+# username and password of the nodes (if the nodes have different passwords, please look into host_vars folder)
+ansible_user: Administrator
+ansible_password: ca$hc0w
+# This is the default port for HTTPS used by winrm
+ansible_port: 5986
+ansible_connection: winrm
+# The following is necessary for Python 2.7.9+ (or any older Python that has backported SSLContext, eg, Python 2.7.5 on RHEL7) when using default WinRM self-signed certificates:
+ansible_winrm_server_cert_validation: ignore
+
+# Install Docker
+docker_version: 19.03
+
+# install_path: where kubernetes binaries and CNI plugin will be installed
+install_path: C:\kubernetes
+service_wrapper_link: https://github.com/cloudbase/OpenStackService/releases/download/v0.1/service-wrapper-sdk10-x64.zip
+prepare_node_link: https://github.com/kubernetes-sigs/sig-windows-tools/releases/latest/download/PrepareNode.ps1
+
+
+# Install OVS
+custom_ovs_link: "https://cloudbase.it/downloads/openvswitch-hyperv-installer-beta-2.10.msi"
+bcdedit_needed: false
+# ovs_certs_link: ""  # link to certificates for OVS if required
+
+
+ovs_link: http://pa-dbc1131.eng.vmware.com/rcao/antrea_windows/openvswitch-win10.zip
+NSXHns_link: http://pa-dbc1131.eng.vmware.com/rcao/antrea_windows/NSXHns.psm1
+pthreads_link: http://pa-dbc1131.eng.vmware.com/rcao/antrea_windows/pthreads-w32-2-9-1-release.zip
+python_link: http://pa-dbc1131.eng.vmware.com/rcao/antrea_windows/python-3.6.8-amd64.exe
+vc_redist_link: http://pa-dbc1131.eng.vmware.com/rcao/antrea_windows/vcredist_x64.exe

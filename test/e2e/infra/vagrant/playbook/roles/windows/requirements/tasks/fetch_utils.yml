@@ -1,0 +1,51 @@
+---
+- name: Windows | Create {{ install_path }} dir
+  win_file:
+    path: "{{ install_path }}"
+    state: directory
+
+- name: Windows | Check if the service wrapper exists
+  win_stat:
+    path: "{{ install_path }}/servicewrapper.exe"
+  register: servicewrapper_info
+
+- name: Windows | Get the service wrapper
+  block:
+    - name: Windows | Download the service wrapper zip file
+      win_get_url:
+        url: "{{ service_wrapper_link }}"
+        dest: "{{ install_path }}/service-wrapper.zip"
+        timeout: 60
+      retries: 3
+
+    - name: Windows | Unzip the service-wrapper zip archive
+      win_unzip:
+        src: "{{ install_path }}/service-wrapper.zip"
+        dest: "{{ install_path }}/service-wrapper"
+
+    - name: Windows | Move the service wrapper to the expected location
+      win_copy:
+        src: "{{ install_path }}/service-wrapper/service-wrapper.exe"
+        dest: "{{ install_path }}/servicewrapper.exe"
+        remote_src: yes
+
+    - name: Windows | Remove service-wrapper temporary files
+      win_file:
+        state: absent
+        path: "{{ item }}"
+      with_items:
+        - "{{ install_path }}/service-wrapper.zip"
+        - "{{ install_path }}/service-wrapper"
+  when: not servicewrapper_info.stat.exists
+
+- name: Windows | Download OVS
+  win_get_url:
+    url: "{{ item }}"
+    dest: "{{ install_path }}"
+    force: no
+  with_items:
+    - "{{ ovs_link }}"
+    - "{{ NSXHns_link }}"
+    - "{{ pthreads_link }}"
+    - "{{ python_link }}"
+    - "{{ vc_redist_link }}"

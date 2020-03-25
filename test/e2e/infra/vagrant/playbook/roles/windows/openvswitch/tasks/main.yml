@@ -1,0 +1,12 @@
+---
+- name: OVS | include vars
+  include_vars: "{{ ansible_os_family|lower }}.yml"
+
+- name: OVS | check if OVS is installed
+  win_service:
+    name: ovsdb-server
+  register: ovs_service
+
+- name: OVS | Install OVS
+  include_tasks: ./install_ovs.yml
+  when: not ovs_service.exists
