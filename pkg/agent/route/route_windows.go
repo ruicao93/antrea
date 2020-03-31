@@ -17,7 +17,9 @@
 package route
 
 import (
+	"fmt"
 	"net"
+	"strings"
 	"sync"
 
 	"github.com/rakelkar/gonetsh/netroute"
@@ -56,6 +58,9 @@ func (c *Client) Initialize(nodeConfig *config.NodeConfig) error {
 	// one. Then the packet is sent back to OVS from the bridge Interface, and the OpenFlow entries will output the packet
 	// to the uplink interface directly.
 	if err := util.EnableIPForwarding(nodeConfig.BridgeName); err != nil {
+		return err
+	}
+	if err := c.initFwRules(nodeConfig); err != nil {
 		return err
 	}
 	return nil
@@ -139,10 +144,136 @@ func (c *Client) listRoutes() (map[string]*netroute.Route, error) {
 		if rt.LinkIndex != c.nodeConfig.GatewayConfig.LinkIndex {
 			continue
 		}
-		if rt.DestinationSubnet.IP.IsLoopback() {
+		// Only process IPv4 route entries in the loop.
+		if rt.DestinationSubnet.IP.To4() == nil {
+			continue
+		}
+		// Retrieve the route entries with destination using global unicast only. This is because the function
+		// "GetNetRoutesAll" also returns the entries of loopback, broadcast, and multicast, which are
+		// added by the system when adding a new IP on the interface. Since removing those route entries might
+		// introduce the host networking issues, ignore them from the list.
+		if !rt.DestinationSubnet.IP.IsGlobalUnicast() {
+			continue
+		}
+		// Windows adds an active route for the local broadcast address automatically when a new IP address
+		// is configured on the interface. This route entry should be ignored in the result.
+		if rt.DestinationSubnet.IP.Equal(util.GetLocalBroadcastIP(rt.DestinationSubnet)) {
 			continue
 		}
 		rtMap[rt.DestinationSubnet.String()] = &rt
 	}
 	return rtMap, nil
+}
+
+const (
+	inboundFirewallRuleName  = "Antrea: accept packets from local pods"
+	outboundFirewallRuleName = "Antrea: accept packets to local pods"
+)
+
+type fwRuleAction string
+
+const (
+	fwRuleAllow fwRuleAction = "Allow"
+	fwRuleDeny  fwRuleAction = "Block"
+)
+
+type fwRuleDirection string
+
+const (
+	fwRuleIn  fwRuleDirection = "Inbound"
+	fwRuleOut fwRuleDirection = "Outbound"
+)
+
+type fwRuleProtocol string
+
+const (
+	fwRuleIPProtocol  fwRuleProtocol = "Any"
+	fwRuleTCPProtocol fwRuleProtocol = "TCP"
+	fwRuleUDPProtocol fwRuleProtocol = "UDP"
+)
+
+type winFirewallRule struct {
+	name          string
+	action        fwRuleAction
+	direction     fwRuleDirection
+	protocol      fwRuleProtocol
+	localAddress  *net.IPNet
+	remoteAddress *net.IPNet
+	localPorts    []uint16
+	remotePorts   []uint16
+}
+
+func (r *winFirewallRule) Add() error {
+	cmd := r.getCommandString()
+	return util.AddFirewallRule(cmd)
+}
+
+func (r *winFirewallRule) Delete() error {
+	return util.DelFirewallRuleByName(r.name)
+}
+
+func (r *winFirewallRule) getCommandString() string {
+	cmd := fmt.Sprintf("-Name '%s' -DisplayName '%s' -Direction %s -Action %s -Protocol %s", r.name, r.name, r.direction, r.action, r.protocol)
+	if r.localAddress != nil {
+		cmd = fmt.Sprintf("%s -LocalAddress %s", cmd, r.localAddress.String())
+	}
+	if r.remoteAddress != nil {
+		cmd = fmt.Sprintf("%s -RemoteAddress %s", cmd, r.remoteAddress.String())
+	}
+	if len(r.localPorts) > 0 {
+		cmd = fmt.Sprintf("%s -LocalPort %s", cmd, getPortsString(r.localPorts))
+	}
+	if len(r.remotePorts) > 0 {
+		cmd = fmt.Sprintf("%s -RemotePort %s", cmd, getPortsString(r.remotePorts))
+	}
+	return cmd
+}
+
+func getPortsString(ports []uint16) string {
+	portStr := []string{}
+	for _, port := range ports {
+		portStr = append(portStr, fmt.Sprintf("%d", port))
+	}
+	return strings.Join(portStr, ",")
+}
+
+// initFwRules adds Windows Firewall rules to accept the traffic that is sent to or from local Pods.
+func (c *Client) initFwRules(nodeConfig *config.NodeConfig) error {
+	exist, err := util.FirewallRuleExists(inboundFirewallRuleName)
+	if err != nil {
+		return err
+	}
+	if !exist {
+		inRule := &winFirewallRule{
+			name:          inboundFirewallRuleName,
+			action:        fwRuleAllow,
+			direction:     fwRuleIn,
+			protocol:      fwRuleIPProtocol,
+			remoteAddress: nodeConfig.PodCIDR,
+		}
+		if err := inRule.Add(); err != nil {
+			klog.Errorf("Failed to add inbound firewall rule %s", inRule.getCommandString())
+			return err
+		}
+		klog.V(2).Infof("Added inbound firewall rule %s", inRule.getCommandString())
+	}
+	exist, err = util.FirewallRuleExists(outboundFirewallRuleName)
+	if err != nil {
+		return err
+	}
+	if !exist {
+		outRule := &winFirewallRule{
+			name:         outboundFirewallRuleName,
+			action:       fwRuleAllow,
+			direction:    fwRuleOut,
+			protocol:     fwRuleIPProtocol,
+			localAddress: nodeConfig.PodCIDR,
+		}
+		if err := outRule.Add(); err != nil {
+			klog.Errorf("Failed to add outbound firewall rule %s", outRule.getCommandString())
+			return err
+		}
+		klog.V(2).Infof("Added outbound firewall rule %s", outRule.getCommandString())
+	}
+	return nil
 }

@@ -15,6 +15,7 @@
 package util
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -282,4 +283,32 @@ func enableHNSOnOVS(hnsNet *hcsshim.HNSNetwork) error {
 		return err
 	}
 	return err
+}
+
+func GetLocalBroadcastIP(ipNet *net.IPNet) net.IP {
+	lastAddr := make(net.IP, len(ipNet.IP.To4()))
+	binary.BigEndian.PutUint32(lastAddr, binary.BigEndian.Uint32(ipNet.IP.To4())|^binary.BigEndian.Uint32(net.IP(ipNet.Mask).To4()))
+	return lastAddr
+}
+
+func AddFirewallRule(rule string) error {
+	cmd := fmt.Sprintf("New-NetFirewallRule -Enabled True -DisplayGroup Antrea %s", rule)
+	return invokePSCommand(cmd)
+}
+
+func DelFirewallRuleByName(name string) error {
+	cmd := fmt.Sprintf("Remove-NetFirewallRule -DisplayName '%s'", name)
+	return invokePSCommand(cmd)
+}
+
+func FirewallRuleExists(name string) (bool, error) {
+	cmd := fmt.Sprintf("Get-NetfirewallRule -DisplayName '%s'", name)
+	result, err := callPSCommand(cmd)
+	if err != nil {
+		if strings.Contains(err.Error(), "No MSFT_NetFirewallRule objects found") {
+			return false, nil
+		}
+		return false, err
+	}
+	return result != "", nil
 }

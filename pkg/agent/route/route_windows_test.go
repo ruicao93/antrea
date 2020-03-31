@@ -17,15 +17,16 @@
 package route
 
 import (
-	"k8s.io/klog"
 	"net"
 	"testing"
 
 	"github.com/rakelkar/gonetsh/netroute"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/klog"
 
 	"github.com/vmware-tanzu/antrea/pkg/agent/config"
+	"github.com/vmware-tanzu/antrea/pkg/agent/util"
 )
 
 func getNetLinkIndex(dev string) int {
@@ -89,4 +90,37 @@ func TestRouteOperation(t *testing.T) {
 	routes4, err := nr.GetNetRoutes(gwLink, destCIDR2)
 	require.Nil(t, err)
 	assert.Equal(t, 0, len(routes4))
+}
+
+func TestWinFirewallRules(t *testing.T) {
+	hostGateway := "Loopback Pseudo-Interface 1"
+	_, serviceCIDR, _ := net.ParseCIDR("1.1.0.0/16")
+	_, podCIDR, _ := net.ParseCIDR("2.2.2.0/24")
+	client, err := NewClient(hostGateway, serviceCIDR, 0)
+	require.Nil(t, err)
+
+	nodeConfig := &config.NodeConfig{
+		Name:    "node1",
+		PodCIDR: podCIDR,
+	}
+
+	checkExistence := func(rules []string, expectExists bool) {
+		for _, ruleName := range rules {
+			exists, err := util.FirewallRuleExists(ruleName)
+			require.Nil(t, err)
+			assert.Equal(t, expectExists, exists)
+		}
+	}
+
+	expectedRules := []string{inboundFirewallRuleName, outboundFirewallRuleName}
+	checkExistence(expectedRules, false)
+	err = client.initFwRules(nodeConfig)
+	require.Nil(t, err)
+	checkExistence(expectedRules, true)
+
+	err = util.DelFirewallRuleByName(inboundFirewallRuleName)
+	require.Nil(t, err)
+	err = util.DelFirewallRuleByName(outboundFirewallRuleName)
+	require.Nil(t, err)
+	checkExistence(expectedRules, false)
 }
