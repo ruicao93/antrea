@@ -327,6 +327,16 @@ func (ic *ifConfigurator) validateContainerPeerInterface(interfaces []*current.I
 		containerVeth.name)
 }
 
+// getInterceptedInterfaces is not supported on Windows.
+func (ic *ifConfigurator) getInterceptedInterfaces(
+	sandbox string,
+	containerNetNS string,
+	containerIFDev string,
+) (*current.Interface, *current.Interface, error) {
+	klog.Info("getInterceptedInterfaces is not supported on Windows, return immediately")
+	return &current.Interface{}, &current.Interface{}, nil
+}
+
 // getOVSInterfaceType returns "internal". Windows uses internal OVS interface for container vNIC.
 func (ic *ifConfigurator) getOVSInterfaceType() int {
 	return internalOVSInterfaceType

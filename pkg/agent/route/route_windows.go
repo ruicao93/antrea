@@ -133,6 +133,16 @@ func (c *Client) DeleteRoutes(podCIDR *net.IPNet) error {
 	return nil
 }
 
+// MigrateRoutesToGw is not supported on Windows, return immediately.
+func (c *Client) MigrateRoutesToGw(linkName string) error {
+	return nil
+}
+
+// UnMigrateRoutesFromGw is not supported on Windows, return immedidately.
+func (c *Client) UnMigrateRoutesFromGw(route *net.IPNet, linkName string) error {
+	return nil
+}
+
 func (c *Client) listRoutes() (map[string]*netroute.Route, error) {
 	routes, err := c.nr.GetNetRoutesAll()
 	if err != nil {
