@@ -92,6 +92,13 @@ spec:
         component: antrea-agent
     spec:
       containers:
+      - command: c:\host\k\wins.exe cli process run --path powershell.exe --args "-File c:\k\Test-Start-OVS.ps1"
+        image: mcr.microsoft.com/powershell
+        volumeMounts:
+        - mountPath: \\.\pipe\rancher_wins
+          name: wins
+        - mountPath: /host
+          name: host
       - args:
         - -file
         - /var/lib/antrea-windows/Run-AntreaAgent.ps1

@@ -152,8 +152,8 @@ function ConfigOVS() {
         LOG "Please manually set the OVS version after installation."
     } else {
         # Set OVS version.
-        Log "Set OVS version: $OVS_VERSION"
         $OVS_VERSION=$(Get-Item $OVSInstallDir\driver\ovsext.sys).VersionInfo.ProductVersion
+        Log "Set OVS version: $OVS_VERSION"
         ovs-vsctl --no-wait set Open_vSwitch . ovs_version=$OVS_VERSION
     }
 
