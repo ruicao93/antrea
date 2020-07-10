@@ -104,7 +104,7 @@ func TestConnectivityFlows(t *testing.T) {
 		testInstallPodFlows,
 		testUninstallPodFlows,
 		testUninstallNodeFlows,
-		testExternalFlows,
+		//testExternalFlows,
 	} {
 		f(t, config)
 	}
