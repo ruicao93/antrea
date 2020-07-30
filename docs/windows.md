@@ -21,6 +21,10 @@ The following components should be configured and run on the Windows Node.
 
 antrea-agent and kube-proxy run as processes on host and are managed by
 management Pods. It is recommended to run OVS daemons as Windows services.
+If you don't want to run antrea-agent and kube-proxy from management Pods
+Antrea also provide scripts which help install and run these two components
+directlty without Pod, please see [Manually run kube-proxy and antrea-agent on Windows worker Nodes](#Manually-run-kube-proxy-and-antrea-agent-on-Windows-worker-Nodes)
+section for details.
 
 ## Deploying Antrea on Windows Worker Node
 
@@ -219,7 +223,24 @@ kubectl get pods -o wide -nkube-system | grep windows
 antrea-agent-windows-6hvkw                             1/1     Running     0          100s
 kube-proxy-windows-2d45w                               1/1     Running     0          102s
 ```
+### Manually run kube-proxy and antrea-agent on Windows worker Nodes
 
+Besides start kube-proxy and antrea-agent from management Pods, Antrea also
+provides powershell scripts which help install and run these two components
+directly without Pod. Please complete the steps in [Installation](#Installation)
+section, skip [Add Windows kube-proxy DaemonSet](#Add-Windows-kube-proxy-DaemonSet)
+and [Add Windows antrea-agent DaemonSet](#Add-Windows-antrea-agent-DaemonSet)
+stpes. And then run following commands in powershell.
+```
+mkdir c:\k\antrea
+cd c:\k\antrea
+curl.exe -LO https://raw.githubusercontent.com/vmware-tanzu/antrea/master/hack/windows/Start.ps1
+./Start.ps1
+``` 
+
+Please skip [Add Windows kube-proxy DaemonSet](#Add-Windows-kube-proxy-DaemonSet)
+and [Add Windows antrea-agent DaemonSet](#Add-Windows-antrea-agent-DaemonSet)
+sections if you choose manually run kube-proxy and antrea-agent.
 
 ## Known issues
 1. HNS Network is not persistent on Windows. So after the Windows Node reboots,
