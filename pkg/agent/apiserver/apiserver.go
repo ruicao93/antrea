@@ -89,8 +89,8 @@ func installAPIGroup(s *genericapiserver.GenericAPIServer, aq agentquerier.Agent
 
 // New creates an APIServer for running in antrea agent.
 func New(aq agentquerier.AgentQuerier, npq querier.AgentNetworkPolicyInfoQuerier, bindPort int,
-	enableMetrics bool) (*agentAPIServer, error) {
-	cfg, err := newConfig(bindPort, enableMetrics)
+	enableMetrics bool, kubeconfig string) (*agentAPIServer, error) {
+	cfg, err := newConfig(bindPort, enableMetrics, kubeconfig)
 	if err != nil {
 		return nil, err
 	}
@@ -105,10 +105,15 @@ func New(aq agentquerier.AgentQuerier, npq querier.AgentNetworkPolicyInfoQuerier
 	return &agentAPIServer{GenericAPIServer: s}, nil
 }
 
-func newConfig(bindPort int, enableMetrics bool) (*genericapiserver.CompletedConfig, error) {
+func newConfig(bindPort int, enableMetrics bool, kubeconfig string) (*genericapiserver.CompletedConfig, error) {
 	secureServing := genericoptions.NewSecureServingOptions().WithLoopback()
 	authentication := genericoptions.NewDelegatingAuthenticationOptions()
 	authorization := genericoptions.NewDelegatingAuthorizationOptions().WithAlwaysAllowPaths("/healthz")
+
+	if len(kubeconfig) > 0 {
+		authentication.RemoteKubeConfigFile = kubeconfig
+		authorization.RemoteKubeConfigFile = kubeconfig
+	}
 
 	// Set the PairName but leave certificate directory blank to generate in-memory by default.
 	secureServing.ServerCert.CertDirectory = ""
