@@ -48,32 +48,7 @@ ANTREA_BUILDS=(
     "darwin amd64 darwin-x86_64"
 )
 
-for build in "${ANTREA_BUILDS[@]}"; do
-    args=($build)
-    os="${args[0]}"
-    arch="${args[1]}"
-    suffix="${args[2]}"
-
-    GOOS=$os GOARCH=$arch ANTCTL_BINARY_NAME="antctl-$suffix" BINDIR="$OUTPUT_DIR"/ make antctl-release
-    cd ./plugins/octant && GOOS=$os GOARCH=$arch ANTREA_OCTANT_PLUGIN_BINARY_NAME="antrea-octant-plugin-$suffix" \
-    BINDIR="$OUTPUT_DIR" make antrea-octant-plugin-release && cd ../..
-done
-
 BINDIR="$OUTPUT_DIR" make windows-bin
 sed "s/AntreaVersion=\"latest\"/AntreaVersion=\"$VERSION\"/" ./hack/windows/Start.ps1 > "$OUTPUT_DIR"/Start.ps1
-
-export IMG_TAG=$VERSION
-
-export IMG_NAME=antrea/antrea-ubuntu
-./hack/generate-manifest.sh --mode release > "$OUTPUT_DIR"/antrea.yml
-./hack/generate-manifest.sh --mode release --ipsec > "$OUTPUT_DIR"/antrea-ipsec.yml
-./hack/generate-manifest.sh --mode release --encap-mode networkPolicyOnly > "$OUTPUT_DIR"/antrea-eks.yml
-./hack/generate-manifest.sh --mode release --cloud GKE --encap-mode noEncap > "$OUTPUT_DIR"/antrea-gke.yml
-
-export IMG_NAME=antrea/octant-antrea-ubuntu
-./hack/generate-manifest-octant.sh --mode release > "$OUTPUT_DIR"/antrea-octant.yml
-
-export IMG_NAME=antrea/antrea-windows
-./hack/generate-manifest-windows.sh --mode release > "$OUTPUT_DIR"/antrea-windows.yml
 
 ls "$OUTPUT_DIR" | cat
