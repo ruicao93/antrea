@@ -1,24 +1,28 @@
 FROM centos:centos7 as ovs-rpms
 
-ARG OVS_VERSION=2.14.0
+ARG OVS_VERSION=2.13.1
 
 RUN yum update -y && yum install wget git yum-utils python38 rpm-build epel-release -y
 
 COPY apply-patches.sh /
 
 # Download OVS source code
-RUN wget -q -O - https://www.openvswitch.org/releases/openvswitch-$OVS_VERSION.tar.gz  | tar xz -C /tmp && \
-    cd /tmp/openvswitch* && \
+RUN wget -q -O - https://www.openvswitch.org/releases/openvswitch-$OVS_VERSION.tar.gz  | tar xz -C /tmp
+RUN cd /tmp/openvswitch* && \
     /apply-patches.sh && \
     sed -e 's/@VERSION@/2.14.0/' rhel/openvswitch-fedora.spec.in > /tmp/ovs.spec && \ 
     yum-builddep -y /tmp/ovs.spec
 RUN cd /tmp/openvswitch* && ./boot.sh && \
     ./configure --prefix=/usr --localstatedir=/var --sysconfdir=/etc && \
-    make rpm-fedora && \
-    mkdir -p /tmp/ovs-rpms && mv /tmp/openvswitch-2.14.0/rpm/rpmbuild/RPMS/*/*.rpm  /tmp/ovs-rpms
+    make rpm-fedora
+RUN  mkdir -p /tmp/ovs-rpms && mv /tmp/openvswitch-$OVS_VERSION/rpm/rpmbuild/RPMS/*/*.rpm  /tmp/ovs-rpms
 
 
 FROM registry.access.redhat.com/ubi8
 
 COPY --from=ovs-rpms /tmp/ovs-rpms/* /tmp/ovs-rpms/
 COPY charon-logging.conf /tmp
+RUN rm -f /etc/yum.repos.d/* && curl https://www.centos.org/keys/RPM-GPG-KEY-CentOS-Official -o /etc/pki/rpm-gpg/RPM-GPG-KEY-centosofficial && \
+    subscription-manager config --rhsm.manage_repos=0
+COPY CentOS.repo /etc/yum.repos.d/CentOS.repo
+RUN yum clean all -y && yum update -y && yum reinstall yum -y && yum install /tmp/ovs-rpms/* -y && rm -rf /tmp/ovs-rpms
