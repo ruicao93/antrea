@@ -222,11 +222,19 @@ build-ubuntu:
 	docker build -t antrea/antrea-ubuntu:$(DOCKER_IMG_VERSION) -f build/images/Dockerfile.build.ubuntu .
 	docker tag antrea/antrea-ubuntu:$(DOCKER_IMG_VERSION) antrea/antrea-ubuntu
 
+# Build bins in a golang container, and build the antrea-ubuntu Docker image.
+.PHONY: build-ubi8
+build-ubi8:
+	@echo "===> Building Antrea bins and antrea/antrea-ubuntu Docker image <==="
+	docker build -t antrea/antrea-ubi8:$(DOCKER_IMG_VERSION) -f build/images/Dockerfile.build.ubi8 .
+	docker tag antrea/antrea-ubi8:$(DOCKER_IMG_VERSION) antrea/antrea-ubi8
+
 .PHONY: build-windows
 build-windows:
 	@echo "===> Building Antrea bins and antrea/antrea-windows Docker image <==="
 	docker build -t antrea/antrea-windows:$(DOCKER_IMG_VERSION) -f build/images/Dockerfile.build.windows .
 	docker tag antrea/antrea-windows:$(DOCKER_IMG_VERSION) antrea/antrea-windows
+
 
 .PHONY: manifest
 manifest:
