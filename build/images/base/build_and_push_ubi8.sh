@@ -1,0 +1,1 @@
+docker build . -f Dockerfile.ubi8 -t base-ubi8:2.14.0

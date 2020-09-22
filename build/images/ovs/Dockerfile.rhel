@@ -1,0 +1,14 @@
+FROM registry.access.redhat.com/ubi8
+
+ARGS OVS_VERSION=2.14.0
+
+RUN yum install gcc make openssl libcap-ng python38-pip unbound-libs wget curl nmap net-tools automake autoconf libtool -y && \
+    pip3 install pyftpdlib tftpy && \
+
+COPY COPY apply-patches.sh /
+
+# Download OVS source code
+RUN wget -q -O - https://www.openvswitch.org/releases/openvswitch-$OVS_VERSION.tar.gz  | tar xz -C /tmp && \
+    cd /tmp/openvswitch* && \
+    /apply-patches.sh && \
+    
