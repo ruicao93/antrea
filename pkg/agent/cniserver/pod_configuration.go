@@ -17,8 +17,11 @@ package cniserver
 import (
 	"encoding/json"
 	"fmt"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"net"
+	"runtime"
 	"strings"
+	"time"
 
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/containernetworking/cni/pkg/types/current"
@@ -239,6 +242,28 @@ func (pc *podConfigurator) configureInterfaces(
 	}
 
 	var containerConfig *interfacestore.InterfaceConfig
+
+	if runtime.GOOS == "windows" {
+		success = true
+		go func() {
+			ifaceName := fmt.Sprintf("vEthernet (%s)", hostIface.Name)
+			err := wait.PollImmediate(time.Second, 60*time.Second, func() (bool, error) {
+				if util.InterfaceExists(ifaceName) {
+					return true, nil
+				}
+				return false, nil
+			})
+			if err != nil {
+				klog.Errorf("timeout to wait interface: %s ready for Pod : %s", ifaceName, podName)
+				return
+			}
+			if containerConfig, err = pc.connectInterfaceToOVS(podName, podNameSpace, containerID, hostIface, containerIface, result.IPs); err != nil {
+				klog.Errorf("failed to connect to ovs for container %s: %v", containerID, err)
+			}
+		}()
+		return nil
+	}
+
 	if containerConfig, err = pc.connectInterfaceToOVS(podName, podNameSpace, containerID, hostIface, containerIface, result.IPs); err != nil {
 		return fmt.Errorf("failed to connect to ovs for container %s: %v", containerID, err)
 	}
