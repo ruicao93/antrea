@@ -178,3 +178,10 @@ func ListenLocalSocket(address string) (net.Listener, error) {
 func DialLocalSocket(address string) (net.Conn, error) {
 	return dialUnix(address)
 }
+
+func InterfaceExists(ifaceName string) bool {
+	if _, err := netlink.LinkByName(dev); err != nil {
+		return false
+	}
+	return true
+}

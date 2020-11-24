@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/Microsoft/hcsshim"
+	"github.com/Microsoft/hcsshim/hcn"
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/containernetworking/cni/pkg/types/current"
 	"k8s.io/klog"
@@ -185,22 +186,47 @@ func (ic *ifConfigurator) createContainerLink(endpointName string, result *curre
 // addresses and routes to the interface. It then sends a gratuitous ARP to the network.
 func attachContainerLink(ep *hcsshim.HNSEndpoint, containerID, sandbox, containerIFDev string) (*current.Interface, error) {
 	var attached bool
-	attached, err := ep.IsAttached(containerID)
-	if err != nil {
-		return nil, err
+	var err error
+	var hcnEp *hcn.HostComputeEndpoint
+	if sandbox == "none" || strings.Contains(sandbox, ":") {
+		attached, err = ep.IsAttached(containerID)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		if hcnEp, err = hcn.GetEndpointByID(ep.Id); err != nil {
+			return nil, err
+		}
+		attachedEpIds, err := hcn.GetNamespaceEndpointIds(sandbox)
+		if err != nil {
+			return nil, err
+		}
+		for _, existingEP := range attachedEpIds {
+			if existingEP == hcnEp.Id {
+				attached = true
+				break
+			}
+		}
 	}
 
 	if attached {
 		klog.V(2).Infof("HNS Endpoint %s already attached on container %s", ep.Id, containerID)
 	} else {
-		if err := hcsshim.HotAttachEndpoint(containerID, ep.Id); err != nil {
-			if isInfraContainer(sandbox) || hcsshim.ErrComputeSystemDoesNotExist != err {
+		if hcnEp == nil {
+			if err := hcsshim.HotAttachEndpoint(containerID, ep.Id); err != nil {
+				if isInfraContainer(sandbox) || hcsshim.ErrComputeSystemDoesNotExist != err {
+					return nil, err
+				}
+			}
+		} else {
+			if err := hcn.AddNamespaceEndpoint(sandbox, hcnEp.Id); err != nil {
 				return nil, err
 			}
 		}
+
 	}
 	containerIface := &current.Interface{
-		Name:    strings.Join([]string{ep.Name, containerIFDev}, "_"),
+		Name:    containerIFDev,
 		Mac:     ep.MacAddress,
 		Sandbox: sandbox,
 	}
@@ -229,6 +255,17 @@ func (ic *ifConfigurator) removeHNSEndpoint(endpoint *hcsshim.HNSEndpoint, conta
 	deleteCh := make(chan error)
 	// Remove HNSEndpoint.
 	go func() {
+		hcnEndpoint, _ := hcn.GetEndpointByID(endpoint.Id)
+		if hcnEndpoint != nil && hcnEndpoint.HostComputeNamespace != "" {
+			err := hcn.RemoveNamespaceEndpoint(hcnEndpoint.HostComputeNamespace, hcnEndpoint.Id)
+			if err != nil {
+				if hcn.IsNotFoundError(err) {
+					deleteCh <- fmt.Errorf("Endpoint or Namespace was not found, err: %v", err)
+				} else {
+					deleteCh <- fmt.Errorf("error removing endpoint from namespace %v : endpoint %v", err, hcnEndpoint)
+				}
+			}
+		}
 		_, err := endpoint.Delete()
 		deleteCh <- err
 	}()
