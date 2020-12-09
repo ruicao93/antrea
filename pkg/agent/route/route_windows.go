@@ -36,11 +36,12 @@ const (
 )
 
 type Client struct {
-	nr          netroute.Interface
-	nodeConfig  *config.NodeConfig
-	serviceCIDR *net.IPNet
-	hostRoutes  *sync.Map
-	fwClient    *winfirewall.Client
+	nr            netroute.Interface
+	nodeConfig    *config.NodeConfig
+	networkConfig *config.NetworkConfig
+	serviceCIDR   *net.IPNet
+	hostRoutes    *sync.Map
+	fwClient      *winfirewall.Client
 }
 
 // NewClient returns a route client.
@@ -48,10 +49,11 @@ type Client struct {
 func NewClient(serviceCIDR *net.IPNet, networkConfig *config.NetworkConfig, noSNAT bool) (*Client, error) {
 	nr := netroute.New()
 	return &Client{
-		nr:          nr,
-		serviceCIDR: serviceCIDR,
-		hostRoutes:  &sync.Map{},
-		fwClient:    winfirewall.NewClient(),
+		nr:            nr,
+		networkConfig: networkConfig,
+		serviceCIDR:   serviceCIDR,
+		hostRoutes:    &sync.Map{},
+		fwClient:      winfirewall.NewClient(),
 	}, nil
 }
 
@@ -70,6 +72,11 @@ func (c *Client) Initialize(nodeConfig *config.NodeConfig, done func()) error {
 	// the uplink interface directly.
 	if err := util.EnableIPForwarding(nodeConfig.GatewayConfig.Name); err != nil {
 		return err
+	}
+	if c.networkConfig.TrafficEncapMode.SupportsNoEncap() {
+		if err := util.EnableIPForwarding(nodeConfig.BridgeInfConfig.Name); err != nil {
+			return err
+		}
 	}
 	done()
 	return nil
@@ -112,8 +119,16 @@ func (c *Client) AddRoutes(podCIDR *net.IPNet, peerNodeIP, peerGwIP net.IP) erro
 			return err
 		}
 	}
-	if err := c.nr.NewNetRoute(c.nodeConfig.GatewayConfig.LinkIndex, podCIDR, peerGwIP); err != nil {
-		return err
+	if c.networkConfig.TrafficEncapMode.NeedsEncapToPeer(peerNodeIP, c.nodeConfig.NodeIPAddr) {
+		if err := c.nr.NewNetRoute(c.nodeConfig.GatewayConfig.LinkIndex, podCIDR, peerGwIP); err != nil {
+			return err
+		}
+	} else if !c.networkConfig.TrafficEncapMode.NeedsRoutingToPeer(peerNodeIP, c.nodeConfig.NodeIPAddr) {
+		if err := c.nr.NewNetRoute(c.nodeConfig.BridgeInfConfig.Index, podCIDR, peerNodeIP); err != nil {
+			return err
+		}
+	} else {
+		return nil
 	}
 	c.hostRoutes.Store(podCIDR.String(), &netroute.Route{
 		LinkIndex:         c.nodeConfig.GatewayConfig.LinkIndex,

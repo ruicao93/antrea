@@ -93,6 +93,8 @@ type NodeConfig struct {
 	GatewayConfig *GatewayConfig
 	// The config of the OVS bridge uplink interface. Only for Windows Node.
 	UplinkNetConfig *AdapterNetConfig
+	// The config of the OVS bridge local interface. Only for Windows Node.
+	BridgeInfConfig *AdapterNetConfig
 }
 
 func (n *NodeConfig) String() string {

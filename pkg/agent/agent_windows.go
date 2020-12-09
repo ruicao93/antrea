@@ -92,6 +92,20 @@ func (i *Initializer) prepareHostNetwork() error {
 	return util.PrepareHNSNetwork(subnetCIDR, i.nodeConfig.NodeIPAddr, adapter)
 }
 
+func (i *Initializer) prepareBridgeInterfaceConfig() error {
+	brName := i.ovsBridgeClient.GetBridgeName()
+	bridgeInterface, err := net.InterfaceByName(brName)
+	if err != nil {
+		return err
+	}
+	i.nodeConfig.BridgeInfConfig.Name = brName
+	i.nodeConfig.BridgeInfConfig.MAC = i.nodeConfig.UplinkNetConfig.MAC
+	i.nodeConfig.BridgeInfConfig.IP = i.nodeConfig.UplinkNetConfig.IP
+	i.nodeConfig.BridgeInfConfig.Gateway = i.nodeConfig.UplinkNetConfig.Gateway
+	i.nodeConfig.BridgeInfConfig.Index = bridgeInterface.Index
+	return nil
+}
+
 // prepareOVSBridge adds local port and uplink to ovs bridge.
 // This function will delete OVS bridge and HNS network created by antrea on failure.
 func (i *Initializer) prepareOVSBridge() error {
@@ -143,8 +157,9 @@ func (i *Initializer) prepareOVSBridge() error {
 	// If uplink is already exists, return.
 	uplinkNetConfig := i.nodeConfig.UplinkNetConfig
 	uplink := uplinkNetConfig.Name
-	if _, err := i.ovsBridgeClient.GetOFPort(uplink); err == nil {
+	if _, err = i.ovsBridgeClient.GetOFPort(uplink); err == nil {
 		klog.Infof("Uplink %s already exists, skip the configuration", uplink)
+		err = i.prepareBridgeInterfaceConfig()
 		return err
 	}
 	// Create uplink port.
@@ -184,6 +199,10 @@ func (i *Initializer) prepareOVSBridge() error {
 		if err = util.SetAdapterDNSServers(brName, uplinkNetConfig.DNSServers); err != nil {
 			return err
 		}
+	}
+
+	if err := i.prepareBridgeInterfaceConfig(); err != nil {
+		return err
 	}
 	// Set the uplink with "no-flood" config, so that the IP of local Pods and "antrea-gw0" will not be leaked to the
 	// underlay network by the "normal" flow entry.

@@ -913,6 +913,23 @@ func (c *client) l3FwdFlowToRemoteViaGW(
 		Done()
 }
 
+// PodFlowFromRemoteViaGW generates the L3 forward flow to support noencap traffic and is only for Windows.
+// There're unknown issues in Windows OVS which treats reply traffic from remote Pod via GW has invalid CT state.
+// The rule is a workaround allow above traffic could to be forwarded to Pod.
+func (c *client) PodFlowFromRemoteViaGW(
+	peerSubnet net.IPNet, category cookie.Category) binding.Flow {
+	ipProto := getIPProtocol(peerSubnet.IP)
+	ctStateTable := c.pipeline[conntrackStateTable]
+	return ctStateTable.BuildFlow(priorityNormal).MatchProtocol(ipProto).
+		MatchCTStateInv(true).MatchCTStateTrk(true).
+		MatchInPort(config.HostGatewayOFPort).
+		MatchSrcIPNet(peerSubnet).
+		Action().ResubmitToTable(sessionAffinityTable).
+		Action().ResubmitToTable(serviceLBTable).
+		Cookie(c.cookieAllocator.Request(category).Raw()).
+		Done()
+}
+
 // arpResponderFlow generates the ARP responder flow entry that replies request comes from local gateway for peer
 // gateway MAC.
 func (c *client) arpResponderFlow(peerGatewayIP net.IP, category cookie.Category) binding.Flow {

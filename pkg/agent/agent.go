@@ -589,7 +589,9 @@ func (i *Initializer) initNodeLocalConfig() error {
 		OVSBridge:       i.ovsBridge,
 		DefaultTunName:  defaultTunInterfaceName,
 		NodeIPAddr:      localAddr,
-		UplinkNetConfig: new(config.AdapterNetConfig)}
+		UplinkNetConfig: new(config.AdapterNetConfig),
+		BridgeInfConfig: new(config.AdapterNetConfig),
+	}
 
 	mtu, err := i.getNodeMTU(localIntf)
 	if err != nil {

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"runtime"
 
 	"github.com/contiv/ofnet/ofctrl"
 	"k8s.io/klog"
@@ -311,6 +312,9 @@ func (c *client) InstallNodeFlows(hostname string,
 			flows = append(flows, c.l3FwdFlowToRemote(localGatewayMAC, *peerPodCIDR, tunnelPeerIP, tunOFPort, cookie.Node))
 		} else {
 			flows = append(flows, c.l3FwdFlowToRemoteViaGW(localGatewayMAC, *peerPodCIDR, cookie.Node))
+			if runtime.GOOS == "windows" {
+				flows = append(flows, c.PodFlowFromRemoteViaGW(*peerPodCIDR, cookie.Node))
+			}
 		}
 	}
 
