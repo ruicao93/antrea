@@ -1,21 +1,31 @@
 Param(
     [parameter(Mandatory = $false)] [string] $DownloadDir,
     [parameter(Mandatory = $false)] [string] $DownloadURL,
-    [parameter(Mandatory = $false)] [string] $OVSInstallDir = "C:\openvswitch"
+    [parameter(Mandatory = $false)] [string] $OVSInstallDir = "C:\openvswitch",
+    [parameter(Mandatory = $false)] [bool] $CheckFile = $true,
+    [parameter(Mandatory = $false)] [string] $LocalFile
 )
 
 $ErrorActionPreference = "Stop"
 $OVSDownloadURL = "https://downloads.antrea.io/ovs/ovs-2.14.0-antrea.1-win64.zip"
 # Use a SHA256 hash to ensure that the downloaded archive iscorrect.
 $OVSPublishedHash = 'E81800A6B8E157C948BAE548E5AFB425B2AD98CE18BC8C6148AB5B7F81E76B7D'
-$OVSDownloadDir = [System.IO.Path]::GetDirectoryName($myInvocation.MyCommand.Definition)
-$InstallLog = "$OVSDownloadDir\install_ovs.log"
-$OVSZip = "$OVSDownloadDir\ovs-win64.zip"
+$WorkDir = [System.IO.Path]::GetDirectoryName($myInvocation.MyCommand.Definition)
+$OVSDownloadDir = $WorkDir
+$PowerShellModuleBase = "C:\Windows\System32\WindowsPowerShell\v1.0\Modules"
+
+if (!$LocalFile) {
+    $OVSZip = "$OVSDownloadDir\ovs-win64.zip"
+} else {
+    $OVSZip = $LocalFile
+    $DownloadDir = Split-Path -Path $LocalFile
+}
 
 if ($DownloadDir -ne "") {
     $OVSDownloadDir = $DownloadDir
-    $InstallLog = "$OVSDownloadDir\install_ovs.log"
 }
+
+$InstallLog = "$OVSDownloadDir\install_ovs.log"
 
 if ($DownloadURL -ne "") {
     $OVSDownloadURL = $DownloadURL
@@ -25,7 +35,7 @@ if ($DownloadURL -ne "") {
 
 function Log($Info) {
     $time = $(get-date -Format g)
-    "$time $Info `n`r" | Tee-Object $InstallLog -Append | Write-Host
+    "$time $Info `n`r" | Tee-Object "$InstallLog" -Append | Write-Host
 }
 
 function CreatePath($Path){
@@ -63,20 +73,29 @@ function CheckIfOVSInstalled() {
 }
 
 function DownloadOVS() {
-    If (!(Test-Path $OVSDownloadDir)) {
-        mkdir -p $OVSDownloadDir
+    if ($LocalFile -ne "") {
+        Log "Use local file: $LocalFile"
+        return
+    } else {
+        If (!(Test-Path $OVSDownloadDir)) {
+            mkdir -p $OVSDownloadDir
+        }
+        Log "Downloading OVS package from $OVSDownloadURL to $OVSZip"
+        curl.exe -sLo $OVSZip $OVSDownloadURL
+        If (!$?) {
+            Log "Download OVS failed, URL: $OVSDownloadURL"
+            exit 1
+        }
     }
-    Log "Downloading OVS package from $OVSDownloadURL to $OVSZip"
-    curl.exe -sLo $OVSZip $OVSDownloadURL
-    If (!$?) {
-        Log "Download OVS failed, URL: $OVSDownloadURL"
-        exit 1
+
+    if ($CheckFile) {
+        $FileHash = Get-FileHash $OVSZip
+        If ($OVSPublishedHash -ne "" -And $FileHash.Hash -ne $OVSPublishedHash) {
+            Log "SHA256 mismatch for OVS download"
+            exit 1
+        }
     }
-    $FileHash = Get-FileHash $OVSZip
-    If ($OVSPublishedHash -ne "" -And $FileHash.Hash -ne $OVSPublishedHash) {
-        Log "SHA256 mismatch for OVS download"
-        exit 1
-    }
+
     Log "Download OVS package success."
 }
 
@@ -86,30 +105,61 @@ function InstallOVS() {
     # Copy OVS package to target dir.
     Log "Copying OVS package from $OVSDownloadDir\openvswitch to $OVSInstallDir"
     mv "$OVSDownloadDir\openvswitch" $OVSInstallDir
-    rm $OVSZip
+    if (!$LocalFile) {
+        rm $OVSZip
+    }
     # Create log and run dir.
     $OVS_LOG_PATH = $OVSInstallDir + "\var\log\openvswitch"
     CreatePath $OVS_LOG_PATH
     $OVSRunDir = $OVSInstallDir + "\var\run\openvswitch"
     CreatePath $OVSRunDir
-    # Install OVS driver certificate.
-    Log "Installing OVS driver certificate."
     $OVSDriverDir = "$OVSInstallDir\driver"
-    $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2("$OVSDriverDir\package.cer")
-    $rootStore = Get-Item cert:\LocalMachine\TrustedPublisher
-    $rootStore.Open("ReadWrite")
-    $rootStore.Add($cert)
-    $rootStore.Close()
-    $rootStore = Get-Item cert:\LocalMachine\Root
-    $rootStore.Open("ReadWrite")
-    $rootStore.Add($cert)
-    $rootStore.Close()
-    # Install Microsoft Visual C++ 2010 Redistributable Package.
-    Log "Installing Microsoft Visual C++ 2010 Redistributable Package."
-    Start-Process -FilePath $OVSInstallDir/redist/vcredist_x64.exe -Args '/install /passive /norestart' -Verb RunAs -Wait
+
+    # Install OVS driver certificate.
+    if (Test-Path $OVSDriverDir\package.cer) {
+        Log "Installing OVS driver certificate."
+        $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2("$OVSDriverDir\package.cer")
+        $rootStore = Get-Item cert:\LocalMachine\TrustedPublisher
+        $rootStore.Open("ReadWrite")
+        $rootStore.Add($cert)
+        $rootStore.Close()
+        $rootStore = Get-Item cert:\LocalMachine\Root
+        $rootStore.Open("ReadWrite")
+        $rootStore.Add($cert)
+        $rootStore.Close()
+    }
+
+    # Install Microsoft Visual C++ Redistributable Package.
+    if (Test-Path $OVSInstallDir\redist) {
+        Log "Installing Microsoft Visual C++ Redistributable Package."
+        $RedistFiles = Get-ChildItem "$OVSInstallDir\redist" -Filter *.exe | Select-Object -ExpandProperty FullName
+        $RedistFiles | ForEach-Object {
+            Start-Process -FilePath $_ -Args '/install /passive /norestart' -Verb RunAs -Wait
+        }
+    }
+
+    # Install powershell modules
+    $OVSHNSPsModulePath = $PowerShellModuleBase + "\OVS"
+    $NSXHNSPsModulePath = $PowerShellModuleBase + "\HNSHelper"
+    if ((Test-Path $OVSInstallDir\scripts\OVS.psm1) -and !(Test-Path $OVSHNSPsModulePath)) {
+        mkdir -p $OVSHNSPsModulePath
+        Copy-Item "$OVSInstallDir\scripts\OVS.psm1" $OVSHNSPsModulePath
+    }
+    if ((Test-Path $OVSInstallDir\scripts\HNSHelper.psm1) -and !(Test-Path $NSXHNSPsModulePath)) {
+        mkdir -p $NSXHNSPsModulePath
+        Copy-Item "$OVSInstallDir\scripts\HNSHelper.psm1" $NSXHNSPsModulePath
+    }
+
+
     # Install OVS kernel driver.
     Log "Installing OVS kernel driver"
-    cmd /c "cd $OVSDriverDir && install.cmd"
+    $HyperInstallState = $(Get-WindowsFeature Hyper-V).InstallState
+    Log "Hyper-V install state: $HyperInstallState"
+    if ($HyperInstallState -eq "Installed") {
+        cmd /c "cd $OVSDriverDir && install.cmd"
+    } else {
+        cd $OVSDriverDir ; netcfg -l .\ovsext.inf -c s -i OVSExt; cd $WorkDir
+    }
     if (!$?) {
         Log "Install OVS kernel driver failed, exit"
         exit 1
