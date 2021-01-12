@@ -165,12 +165,9 @@ func SetAdapterMACAddress(adapterName string, macConfig *net.HardwareAddr) error
 
 // WindowsHyperVInstalled checks if the Hyper-V feature is enabled on the host.
 func WindowsHyperVInstalled() (bool, error) {
-	cmd := "$(Get-WindowsFeature Hyper-V).InstallState"
-	result, err := CallPSCommand(cmd)
-	if err != nil {
-		return true, err
-	}
-	return strings.HasPrefix(result, "Installed"), nil
+	cmd := "Get-VMSwitch"
+	err := InvokePSCommand(cmd)
+	return err == nil, nil
 }
 
 // CreateHNSNetwork creates a new HNS Network, whose type is "Transparent". The NetworkAdapter is using the host
