@@ -137,6 +137,16 @@ func (i *Initializer) prepareOVSBridge() error {
 		klog.Errorf("Failed to add uplink port %s: %v", uplink, err)
 		return err
 	}
+	var uplinkOFPort int32
+	uplinkOFPort, err = i.ovsBridgeClient.GetOFPort(uplink)
+	if err != nil {
+		klog.Errorf("Failed to get uplink port %s: %v", uplink, err)
+		return err
+	}
+	if uplinkOFPort != config.UplinkOFPort {
+		klog.Errorf("Expected uplink port is: %d, but got: %d", config.UplinkOFPort, uplinkOFPort)
+		return err
+	}
 	uplinkInterface := interfacestore.NewUplinkInterface(uplink)
 	uplinkInterface.OVSPortConfig = &interfacestore.OVSPortConfig{uplinkPortUUId, config.UplinkOFPort} //nolint: govet
 	i.ifaceStore.AddInterface(uplinkInterface)
