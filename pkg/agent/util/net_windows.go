@@ -85,14 +85,7 @@ func EnableHostInterface(ifaceName string) error {
 
 // ConfigureInterfaceAddress adds IPAddress on the specified interface.
 func ConfigureInterfaceAddress(ifaceName string, ipConfig *net.IPNet) error {
-	ipStr := strings.Split(ipConfig.String(), "/")
-	cmd := fmt.Sprintf(`New-NetIPAddress -InterfaceAlias "%s" -IPAddress %s -PrefixLength %s`, ifaceName, ipStr[0], ipStr[1])
-	err := InvokePSCommand(cmd)
-	// If the address already exists, ignore the error.
-	if err != nil && !strings.Contains(err.Error(), "already exists") {
-		return err
-	}
-	return nil
+	return ConfigureInterfaceAddressWithDefaultGateway(ifaceName, ipConfig, "")
 }
 
 // ConfigureInterfaceAddressWithDefaultGateway adds IPAddress on the specified interface and sets the default gateway
@@ -100,10 +93,18 @@ func ConfigureInterfaceAddress(ifaceName string, ipConfig *net.IPNet) error {
 func ConfigureInterfaceAddressWithDefaultGateway(ifaceName string, ipConfig *net.IPNet, gateway string) error {
 	ipStr := strings.Split(ipConfig.String(), "/")
 	cmd := fmt.Sprintf(`New-NetIPAddress -InterfaceAlias "%s" -IPAddress %s -PrefixLength %s -DefaultGateway %s`, ifaceName, ipStr[0], ipStr[1], gateway)
-	err := InvokePSCommand(cmd)
-	// If the address already exists, ignore the error.
-	if err != nil && !strings.Contains(err.Error(), "already exists") {
-		return err
+	if gateway != "" {
+		cmd = fmt.Sprintf("%s -DefaultGateway %s", cmd, gateway)
+	}
+	if err := wait.PollImmediate(commandRetryInternal, commandMaxRetry, func() (done bool, err error) {
+		if err := InvokePSCommand(cmd); err != nil && !strings.Contains(err.Error(), "already exists") {
+			klog.Errorf("Failed to run command %s: %v", cmd, err)
+			return false, nil
+		}
+		return true, nil
+
+	}); err != nil {
+		return fmt.Errorf("failed to configure address on interface %s: %v", ifaceName, err)
 	}
 	return nil
 }
