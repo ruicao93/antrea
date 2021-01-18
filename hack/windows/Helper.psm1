@@ -150,20 +150,17 @@ function New-KubeProxyServiceInterface {
     )
     $ErrorActionPreference = "Stop"
 
-    $hnsSwitchName = "KubeProxyInternalSwitch"
+    $hnsSwitchName = "KubeProxyNet"
     $INTERFACE_TO_ADD_SERVICE_IP = "vEthernet ($InterfaceAlias)"
     if (Get-NetAdapter -InterfaceAlias $INTERFACE_TO_ADD_SERVICE_IP -ErrorAction SilentlyContinue) {
         Write-Host "Network adapter $INTERFACE_TO_ADD_SERVICE_IP exists, exit."
         return
     }
-    if (!(Get-VMSwitch -Name $hnsSwitchName -ErrorAction SilentlyContinue)) {
-        Write-Host "Creating internal switch: $hnsSwitchName for kube-proxy"
-        New-VMSwitch -name $hnsSwitchName -SwitchType Internal
-    }
-    Write-Host "Creating network adapter: $INTERFACE_TO_ADD_SERVICE_IP for kube-proxy"
-    [Environment]::SetEnvironmentVariable("INTERFACE_TO_ADD_SERVICE_IP", $INTERFACE_TO_ADD_SERVICE_IP, [System.EnvironmentVariableTarget]::Machine)
-    Add-VMNetworkAdapter -ManagementOS -Name $InterfaceAlias -SwitchName $hnsSwitchName
+    $hnsNetworkName = "KubeProxyNet"
+    New-HnsNetwork -Name $hnsNetworkName -Type nat
+    Rename-NetAdapter -Name "vEthernet ($hnsNetworkName)" -NewName "$INTERFACE_TO_ADD_SERVICE_IP"
     Set-NetIPInterface -ifAlias $INTERFACE_TO_ADD_SERVICE_IP -Forwarding Enabled
+    [Environment]::SetEnvironmentVariable("INTERFACE_TO_ADD_SERVICE_IP", $INTERFACE_TO_ADD_SERVICE_IP, [System.EnvironmentVariableTarget]::Machine)
 }
 
 function Start-KubeProxy {
