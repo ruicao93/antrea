@@ -17,7 +17,6 @@ package cniserver
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/Microsoft/hcsshim"
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/containernetworking/cni/pkg/types/current"
 	"github.com/containernetworking/cni/pkg/version"
@@ -34,7 +33,6 @@ import (
 	"net"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -73,6 +71,7 @@ type interfaceConfigurator interface {
 	validateContainerPeerInterface(interfaces []*current.Interface, containerVeth *vethPair) (*vethPair, error)
 	getOVSInterfaceType() int
 	getInterceptedInterfaces(sandbox, containerNS, containerIFDev string) (*current.Interface, *current.Interface, error)
+	getOVSPortParam(containerID string) (*OVSPortParam, bool)
 }
 
 type podConfigurator struct {
@@ -82,7 +81,6 @@ type podConfigurator struct {
 	ifaceStore      interfacestore.InterfaceStore
 	gatewayMAC      net.HardwareAddr
 	ifConfigurator  interfaceConfigurator
-	ovsPortCache    *sync.Map
 }
 
 func newPodConfigurator(
@@ -106,22 +104,7 @@ func newPodConfigurator(
 		ifaceStore:      ifaceStore,
 		gatewayMAC:      gatewayMAC,
 		ifConfigurator:  ifConfigurator,
-		ovsPortCache:    &sync.Map{},
 	}
-	ifConfigurator.epCache.Range(func(key, value interface{}) bool {
-		ep, _ := value.(*hcsshim.HNSEndpoint)
-		ifaceName := fmt.Sprintf("%s (%s)", util.ContainerVNICPrefix, ep.Name)
-		if util.InterfaceExists(ifaceName) {
-			return true
-		}
-		ovsPortParam, err := LoadOVSPortParam(ep)
-		if err != nil {
-			klog.Errorf("failed to parse OVSPortParam for HNSEndpoint: %s", ep.Name)
-			return true
-		}
-		podConfig.ovsPortCache.Store(ovsPortParam.ContainerID, ovsPortParam)
-		return true
-	})
 
 	return podConfig, nil
 }
@@ -222,12 +205,11 @@ func (pc *podConfigurator) createPortAsync(containerID string, containerAccess *
 	err := wait.PollImmediate(time.Second, 60*time.Second, func() (bool, error) {
 		containerAccess.lockContainer(containerID)
 		defer containerAccess.unlockContainer(containerID)
-		value, ok := pc.ovsPortCache.Load(containerID)
+		ovsPortParam, ok := pc.ifConfigurator.getOVSPortParam(containerID)
 		if !ok {
 			klog.Warningf("Cannot find OVS port configuration for container: %s, skip creation", containerID)
 			return true, nil
 		}
-		ovsPortParam, _ := value.(*OVSPortParam)
 		if !util.InterfaceExists(ovsPortParam.HostIface.Name) {
 			klog.Infof("Waiting for interface: %s to be created", ovsPortParam.HostIface.Name)
 			return false, nil
@@ -293,22 +275,10 @@ func (pc *podConfigurator) configureInterfaces(
 	if runtime.GOOS == "windows" {
 		ifaceName := fmt.Sprintf("vEthernet (%s)", hostIface.Name)
 		if !util.InterfaceExists(ifaceName) {
-			if _, ok := pc.ovsPortCache.Load(hostIface.Name); ok {
+			if _, ok := pc.ifConfigurator.getOVSPortParam(containerID); ok {
 				return fmt.Errorf("OVS port: %s is till in creating", hostIface.Name)
 			} else {
-				if err = PersistOVSPortParam(podName, podNameSpace, containerID, hostIface, containerIface, result.IPs); err != nil {
-					klog.Errorf("Failed to save OVSPortParamInternal: %s", err.Error())
-					return err
-				}
-				ovsPortParam := &OVSPortParam{
-					PodName:        podName,
-					PodNameSpace:   podNameSpace,
-					ContainerID:    containerID,
-					HostIface:      hostIface,
-					ContainerIface: containerIface,
-					Ips:            result.IPs,
-				}
-				pc.ovsPortCache.Store(containerID, ovsPortParam)
+				success = true
 				go pc.createPortAsync(containerID, containerAccess)
 			}
 			return nil
@@ -353,9 +323,6 @@ func (pc *podConfigurator) createOVSPort(ovsPortName string, ovsAttachInfo map[s
 }
 
 func (pc *podConfigurator) removeInterfaces(containerID string) error {
-	if runtime.GOOS == "windows" {
-		pc.ovsPortCache.Delete(containerID)
-	}
 	containerConfig, found := pc.ifaceStore.GetContainerInterface(containerID)
 	if !found {
 		klog.V(2).Infof("Did not find the port for container %s in local cache", containerID)

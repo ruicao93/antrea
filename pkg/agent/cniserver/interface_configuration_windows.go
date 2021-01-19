@@ -39,8 +39,9 @@ const (
 )
 
 type ifConfigurator struct {
-	hnsNetwork *hcsshim.HNSNetwork
-	epCache    *sync.Map
+	hnsNetwork   *hcsshim.HNSNetwork
+	epCache      *sync.Map
+	ovsPortCache *sync.Map
 }
 
 func newInterfaceConfigurator(ovsDataPathType string, isOvsHardwareOffloadEnabled bool) (*ifConfigurator, error) {
@@ -53,10 +54,40 @@ func newInterfaceConfigurator(ovsDataPathType string, isOvsHardwareOffloadEnable
 		hnsEP := &eps[i]
 		epCache.Store(hnsEP.Name, hnsEP)
 	}
+
+	ovsPortCache := &sync.Map{}
+	epCache.Range(func(key, value interface{}) bool {
+		ep, _ := value.(*hcsshim.HNSEndpoint)
+		ifaceName := fmt.Sprintf("%s (%s)", util.ContainerVNICPrefix, ep.Name)
+		if util.InterfaceExists(ifaceName) {
+			return true
+		}
+		ovsPortParam, err := LoadOVSPortParam(ep)
+		if err != nil {
+			klog.Errorf("failed to parse OVSPortParam for HNSEndpoint: %s", ep.Name)
+			return true
+		}
+		if ovsPortParam == nil {
+			return true
+		}
+		ovsPortCache.Store(ovsPortParam.ContainerID, ovsPortParam)
+		return true
+	})
+
 	return &ifConfigurator{
-		epCache: epCache,
+		epCache:      epCache,
+		ovsPortCache: ovsPortCache,
 	}, nil
 
+}
+
+func (ic *ifConfigurator) getOVSPortParam(containerID string) (*OVSPortParam, bool) {
+	value, ok := ic.epCache.Load(containerID)
+	if !ok {
+		return nil, false
+	}
+	ovsPortParam, _ := value.(*OVSPortParam)
+	return ovsPortParam, true
 }
 
 func (ic *ifConfigurator) addEndpoint(ep *hcsshim.HNSEndpoint) {
@@ -120,12 +151,34 @@ func (ic *ifConfigurator) configureContainerLink(
 	epName := util.GenerateContainerInterfaceName(podName, podNameSpace, infraContainerID)
 	// Search endpoint from local cache.
 	endpoint, found := ic.getEndpoint(epName)
+	var additionalParams map[string]string
+	var ovsPortParam *OVSPortParam
 	if !found {
 		if !isInfraContainer(containerNetNS) {
 			return fmt.Errorf("failed to find HNSEndpoint: %s", epName)
 		}
+		if isContainerdInfaContainer(containerNetNS) {
+			ovsPortParam = &OVSPortParam{
+				PodName:      podName,
+				PodNameSpace: podNameSpace,
+				ContainerID:  containerID,
+				HostIface: &current.Interface{
+					Name: endpoint.Name,
+				},
+				ContainerIface: &current.Interface{
+					Name: containerIFDev,
+				},
+				Ips: result.IPs,
+			}
+			if ovsPortParam, err := ovsPortParam.MarshalJson(); err != nil {
+				return err
+			} else {
+				additionalParams = make(map[string]string)
+				additionalParams["ovsPortParam"] = string(ovsPortParam)
+			}
+		}
 		// Only create HNS Endpoint for infra container.
-		ep, err := ic.createContainerLink(epName, result)
+		ep, err := ic.createContainerLink(epName, result, additionalParams)
 		if err != nil {
 			return err
 		}
@@ -152,11 +205,16 @@ func (ic *ifConfigurator) configureContainerLink(
 	// Update IPConfig with the index of target interface in the result. The index is used in CNI CmdCheck.
 	ifaceIdx := 1
 	containerIP.Interface = &ifaceIdx
+	if ovsPortParam != nil {
+		ovsPortParam.HostIface = result.Interfaces[0]
+		ovsPortParam.ContainerIface = result.Interfaces[1]
+		ic.epCache.Store(containerID, ovsPortParam)
+	}
 	return nil
 }
 
 // createContainerLink creates HNSEndpoint using the IP configuration in the IPAM result.
-func (ic *ifConfigurator) createContainerLink(endpointName string, result *current.Result) (hostLink *hcsshim.HNSEndpoint, err error) {
+func (ic *ifConfigurator) createContainerLink(endpointName string, result *current.Result, additionalParams map[string]string) (hostLink *hcsshim.HNSEndpoint, err error) {
 	// Create a new Endpoint if not found.
 	if err := ic.ensureHNSNetwork(); err != nil {
 		return nil, err
@@ -172,6 +230,9 @@ func (ic *ifConfigurator) createContainerLink(endpointName string, result *curre
 		DNSSuffix:      strings.Join(result.DNS.Search, ","),
 		GatewayAddress: containerIP.Gateway.String(),
 		IPAddress:      containerIP.Address.IP,
+	}
+	if additionalParams != nil {
+		epRequest.AdditionalParams = additionalParams
 	}
 	hnsEP, err := epRequest.Create()
 	if err != nil {
@@ -242,6 +303,7 @@ func (ic *ifConfigurator) advertiseContainerAddr(containerNetNS string, containe
 
 // removeContainerLink removes the HNSEndpoint attached on the Pod.
 func (ic *ifConfigurator) removeContainerLink(containerID, epName string) error {
+	ic.epCache.Delete(containerID)
 	ep, found := ic.getEndpoint(epName)
 	if !found {
 		return nil

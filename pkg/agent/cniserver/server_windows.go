@@ -55,6 +55,10 @@ func isInfraContainer(netNS string) bool {
 	return netNS == infraContainerNetNS || !strings.Contains(netNS, ":")
 }
 
+func isContainerdInfaContainer(netNs string) bool {
+	return netNs != infraContainerNetNS && !strings.Contains(netNs, ":")
+}
+
 func getInfraContainer(containerID, netNS string) string {
 	if isInfraContainer(netNS) {
 		return containerID
@@ -89,13 +93,55 @@ type OVSPortParam struct {
 	Ips            []*current.IPConfig
 }
 
-type OVSPortParamInternal struct {
+type ovsPortParamInternal struct {
 	PodName        string            `json:",omitempty"`
 	PodNameSpace   string            `json:",omitempty"`
 	ContainerID    string            `json:",omitempty"`
 	HostIface      current.Interface `json:",omitempty"`
 	ContainerIface current.Interface `json:",omitempty"`
 	Ips            []string          `json:",omitempty"`
+}
+
+func (ovsPortParam *OVSPortParam) MarshalJson() ([]byte, error) {
+	ipsString := make([]string, 0, len(ovsPortParam.Ips))
+	for _, ip := range ovsPortParam.Ips {
+		ipStr, err := ip.MarshalJSON()
+		if err != nil {
+			return nil, err
+		}
+		ipsString = append(ipsString, string(ipStr))
+	}
+	ovsPortParamInternal := ovsPortParamInternal{
+		PodName:        ovsPortParam.PodName,
+		PodNameSpace:   ovsPortParam.PodNameSpace,
+		ContainerID:    ovsPortParam.ContainerID,
+		HostIface:      *ovsPortParam.HostIface,
+		ContainerIface: *ovsPortParam.ContainerIface,
+		Ips:            ipsString,
+	}
+	return json.Marshal(ovsPortParamInternal)
+}
+
+func (ovsPortParam *OVSPortParam) UnmarshalJson(data []byte) error {
+	ovsPortParamInternal := ovsPortParamInternal{}
+	if err := json.Unmarshal(data, &ovsPortParamInternal); err != nil {
+		return err
+	}
+	ovsPortParam.PodName = ovsPortParamInternal.PodName
+	ovsPortParam.PodNameSpace = ovsPortParamInternal.PodNameSpace
+	ovsPortParam.ContainerID = ovsPortParamInternal.ContainerID
+	ovsPortParam.HostIface = &ovsPortParamInternal.HostIface
+	ovsPortParam.ContainerIface = &ovsPortParamInternal.ContainerIface
+
+	ipConfigs := make([]*current.IPConfig, 0, len(ovsPortParamInternal.Ips))
+	for _, ipStr := range ovsPortParamInternal.Ips {
+		ipConfig := current.IPConfig{}
+		if err := ipConfig.UnmarshalJSON([]byte(ipStr)); err != nil {
+			return fmt.Errorf("failed to parse IPConfig: %v", err)
+		}
+		ipConfigs = append(ipConfigs, &ipConfig)
+	}
+	return nil
 }
 
 func PersistOVSPortParam(
@@ -113,7 +159,7 @@ func PersistOVSPortParam(
 		}
 		ipsString = append(ipsString, string(ipStr))
 	}
-	ovsPortParam := OVSPortParamInternal{
+	ovsPortParam := ovsPortParamInternal{
 		PodName:        podName,
 		PodNameSpace:   podNameSpace,
 		ContainerID:    containerID,
@@ -129,7 +175,7 @@ func PersistOVSPortParam(
 	if err != nil {
 		return err
 	}
-	ep.AdditionalParams["OVSPortParamInternal"] = string(ovsPortParamString)
+	ep.AdditionalParams["ovsPortParam"] = string(ovsPortParamString)
 	if _, err = ep.Update(); err != nil {
 		return err
 	}
@@ -137,11 +183,11 @@ func PersistOVSPortParam(
 }
 
 func LoadOVSPortParam(ep *hcsshim.HNSEndpoint) (*OVSPortParam, error) {
-	paramStr, ok := ep.AdditionalParams["OVSPortParamInternal"]
+	paramStr, ok := ep.AdditionalParams["ovsPortParam"]
 	if !ok {
 		return nil, nil
 	}
-	ovsPortParamInternal := OVSPortParamInternal{}
+	ovsPortParamInternal := ovsPortParamInternal{}
 	if err := json.Unmarshal([]byte(paramStr), &ovsPortParamInternal); err != nil {
 		return nil, err
 	}
@@ -152,6 +198,8 @@ func LoadOVSPortParam(ep *hcsshim.HNSEndpoint) (*OVSPortParam, error) {
 		HostIface:      &ovsPortParamInternal.HostIface,
 		ContainerIface: &ovsPortParamInternal.ContainerIface,
 	}
+	ovsPortParam.HostIface.Mac = ep.MacAddress
+	ovsPortParam.ContainerIface.Mac = ep.MacAddress
 	ipConfigs := make([]*current.IPConfig, 0, len(ovsPortParamInternal.Ips))
 	for _, ipStr := range ovsPortParamInternal.Ips {
 		ipConfig := current.IPConfig{}
