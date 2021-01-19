@@ -34,13 +34,11 @@ import (
 )
 
 const (
-	ContainerVNICPrefix  = "vEthernet"
-	HNSNetworkType       = "Transparent"
-	LocalHNSNetwork      = "antrea-hnsnetwork"
-	OVSExtensionID       = "583CC151-73EC-4A6A-8B47-578297AD7623"
-	namedPipePrefix      = `\\.\pipe\`
-	commandMaxRetry      = 5
-	commandRetryInternal = time.Second
+	ContainerVNICPrefix = "vEthernet"
+	HNSNetworkType      = "Transparent"
+	LocalHNSNetwork     = "antrea-hnsnetwork"
+	OVSExtensionID      = "583CC151-73EC-4A6A-8B47-578297AD7623"
+	namedPipePrefix     = `\\.\pipe\`
 )
 
 func GetNSPath(containerNetNS string) (string, error) {
@@ -56,23 +54,31 @@ func GetHostInterfaceStatus(ifaceName string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+func IsHostInterfaceUp(ifaceName string) (bool, error) {
+	status, err := GetHostInterfaceStatus(ifaceName)
+	if err != nil {
+		return false, err
+	}
+	return strings.EqualFold(status, "Up"), nil
+}
+
 // EnableHostInterface sets the specified interface status as UP.
 func EnableHostInterface(ifaceName string) error {
 	cmd := fmt.Sprintf(`Enable-NetAdapter -InterfaceAlias "%s"`, ifaceName)
 	// Enable-NetAdapter is not a blocking operation based on our testing.
 	// It returns immediately no matter whether the interface has been enabled or not.
 	// So we need to check the interface status to ensure it is up before returning.
-	if err := wait.PollImmediate(commandRetryInternal, commandMaxRetry, func() (done bool, err error) {
+	if err := wait.PollImmediate(2*time.Second, 20*time.Second, func() (done bool, err error) {
 		if err := InvokePSCommand(cmd); err != nil {
 			klog.Errorf("Failed to run command %s: %v", cmd, err)
 			return false, nil
 		}
-		status, err := GetHostInterfaceStatus(ifaceName)
+		up, err := IsHostInterfaceUp(ifaceName)
 		if err != nil {
-			klog.Errorf("Failed to run command %s: %v", cmd, err)
+			klog.Errorf("Failed to get status of interface %s: %v", ifaceName, err)
 			return false, nil
 		}
-		if !strings.EqualFold(status, "Up") {
+		if !up {
 			klog.Infof("Waiting for host interface %s to be up", ifaceName)
 			return false, nil
 		}
