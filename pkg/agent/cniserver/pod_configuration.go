@@ -17,25 +17,25 @@ package cniserver
 import (
 	"encoding/json"
 	"fmt"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"net"
-	"runtime"
-	"strings"
-	"time"
-
+	"github.com/Microsoft/hcsshim"
 	cnitypes "github.com/containernetworking/cni/pkg/types"
 	"github.com/containernetworking/cni/pkg/types/current"
 	"github.com/containernetworking/cni/pkg/version"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
-	"k8s.io/klog"
-
 	"github.com/vmware-tanzu/antrea/pkg/agent/interfacestore"
 	"github.com/vmware-tanzu/antrea/pkg/agent/openflow"
 	"github.com/vmware-tanzu/antrea/pkg/agent/route"
 	"github.com/vmware-tanzu/antrea/pkg/agent/util"
 	"github.com/vmware-tanzu/antrea/pkg/k8s"
 	"github.com/vmware-tanzu/antrea/pkg/ovs/ovsconfig"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/klog"
+	"net"
+	"runtime"
+	"strings"
+	"sync"
+	"time"
 )
 
 type vethPair struct {
@@ -82,6 +82,7 @@ type podConfigurator struct {
 	ifaceStore      interfacestore.InterfaceStore
 	gatewayMAC      net.HardwareAddr
 	ifConfigurator  interfaceConfigurator
+	ovsPortCache    *sync.Map
 }
 
 func newPodConfigurator(
@@ -97,14 +98,32 @@ func newPodConfigurator(
 	if err != nil {
 		return nil, err
 	}
-	return &podConfigurator{
+
+	podConfig := &podConfigurator{
 		ovsBridgeClient: ovsBridgeClient,
 		ofClient:        ofClient,
 		routeClient:     routeClient,
 		ifaceStore:      ifaceStore,
 		gatewayMAC:      gatewayMAC,
 		ifConfigurator:  ifConfigurator,
-	}, nil
+		ovsPortCache:    &sync.Map{},
+	}
+	ifConfigurator.epCache.Range(func(key, value interface{}) bool {
+		ep, _ := value.(*hcsshim.HNSEndpoint)
+		ifaceName := fmt.Sprintf("%s (%s)", util.ContainerVNICPrefix, ep.Name)
+		if util.InterfaceExists(ifaceName) {
+			return true
+		}
+		ovsPortParam, err := LoadOVSPortParam(ep)
+		if err != nil {
+			klog.Errorf("failed to parse OVSPortParam for HNSEndpoint: %s", ep.Name)
+			return true
+		}
+		podConfig.ovsPortCache.Store(ovsPortParam.ContainerID, ovsPortParam)
+		return true
+	})
+
+	return podConfig, nil
 }
 
 func parseContainerIPs(ipcs []*current.IPConfig) ([]net.IP, error) {
@@ -198,6 +217,33 @@ func ParseOVSPortInterfaceConfig(portData *ovsconfig.OVSPortData, portConfig *in
 	return interfaceConfig
 }
 
+func (pc *podConfigurator) createPortAsync(containerID string, containerAccess *containerAccessArbitrator) {
+	klog.Infof("Creating OVS port for container %s asynchronously", containerID)
+	err := wait.PollImmediate(time.Second, 60*time.Second, func() (bool, error) {
+		containerAccess.lockContainer(containerID)
+		defer containerAccess.unlockContainer(containerID)
+		value, ok := pc.ovsPortCache.Load(containerID)
+		if !ok {
+			klog.Warningf("Cannot find OVS port configuration for container: %s, skip creation", containerID)
+			return true, nil
+		}
+		ovsPortParam, _ := value.(*OVSPortParam)
+		if !util.InterfaceExists(ovsPortParam.HostIface.Name) {
+			klog.Infof("Waiting for interface: %s to be created", ovsPortParam.HostIface.Name)
+			return false, nil
+		}
+		if _, err := pc.connectInterfaceToOVS(
+			ovsPortParam.PodName, ovsPortParam.PodNameSpace, ovsPortParam.ContainerID,
+			ovsPortParam.HostIface, ovsPortParam.ContainerIface, ovsPortParam.Ips); err != nil {
+			return true, fmt.Errorf("failed to connect to ovs for container %s: %v", containerID, err)
+		}
+		return true, nil
+	})
+	if err != nil {
+		klog.Errorf("failed to create OVS port for container %s: %v", containerID, err)
+	}
+}
+
 func (pc *podConfigurator) configureInterfaces(
 	podName string,
 	podNameSpace string,
@@ -208,6 +254,7 @@ func (pc *podConfigurator) configureInterfaces(
 	sriovVFDeviceID string,
 	result *current.Result,
 	createOVSPort bool,
+	containerAccess *containerAccessArbitrator,
 ) error {
 	err := pc.ifConfigurator.configureContainerLink(podName, podNameSpace, containerID, containerNetNS, containerIFDev, mtu, sriovVFDeviceID, result)
 	if err != nil {
@@ -244,24 +291,28 @@ func (pc *podConfigurator) configureInterfaces(
 	var containerConfig *interfacestore.InterfaceConfig
 
 	if runtime.GOOS == "windows" {
-		success = true
-		go func() {
-			ifaceName := fmt.Sprintf("vEthernet (%s)", hostIface.Name)
-			err := wait.PollImmediate(time.Second, 60*time.Second, func() (bool, error) {
-				if util.InterfaceExists(ifaceName) {
-					return true, nil
+		ifaceName := fmt.Sprintf("vEthernet (%s)", hostIface.Name)
+		if !util.InterfaceExists(ifaceName) {
+			if _, ok := pc.ovsPortCache.Load(hostIface.Name); ok {
+				return fmt.Errorf("OVS port: %s is till in creating", hostIface.Name)
+			} else {
+				if err = PersistOVSPortParam(podName, podNameSpace, containerID, hostIface, containerIface, result.IPs); err != nil {
+					klog.Errorf("Failed to save OVSPortParamInternal: %s", err.Error())
+					return err
 				}
-				return false, nil
-			})
-			if err != nil {
-				klog.Errorf("timeout to wait interface: %s ready for Pod : %s", ifaceName, podName)
-				return
+				ovsPortParam := &OVSPortParam{
+					PodName:        podName,
+					PodNameSpace:   podNameSpace,
+					ContainerID:    containerID,
+					HostIface:      hostIface,
+					ContainerIface: containerIface,
+					Ips:            result.IPs,
+				}
+				pc.ovsPortCache.Store(containerID, ovsPortParam)
+				go pc.createPortAsync(containerID, containerAccess)
 			}
-			if containerConfig, err = pc.connectInterfaceToOVS(podName, podNameSpace, containerID, hostIface, containerIface, result.IPs); err != nil {
-				klog.Errorf("failed to connect to ovs for container %s: %v", containerID, err)
-			}
-		}()
-		return nil
+			return nil
+		}
 	}
 
 	if containerConfig, err = pc.connectInterfaceToOVS(podName, podNameSpace, containerID, hostIface, containerIface, result.IPs); err != nil {
@@ -302,6 +353,9 @@ func (pc *podConfigurator) createOVSPort(ovsPortName string, ovsAttachInfo map[s
 }
 
 func (pc *podConfigurator) removeInterfaces(containerID string) error {
+	if runtime.GOOS == "windows" {
+		pc.ovsPortCache.Delete(containerID)
+	}
 	containerConfig, found := pc.ifaceStore.GetContainerInterface(containerID)
 	if !found {
 		klog.V(2).Infof("Did not find the port for container %s in local cache", containerID)

@@ -17,6 +17,9 @@
 package cniserver
 
 import (
+	"encoding/json"
+	"fmt"
+	"github.com/Microsoft/hcsshim"
 	"strings"
 
 	"github.com/containernetworking/cni/pkg/types/current"
@@ -75,4 +78,87 @@ func getInfraContainer(containerID, netNS string) string {
 // "container_id" and have infra container ID in "netns" in the form of "container:<INFRA CONTAINER ID>".
 func (c *CNIConfig) getInfraContainer() string {
 	return getInfraContainer(c.ContainerId, c.Netns)
+}
+
+type OVSPortParam struct {
+	PodName        string
+	PodNameSpace   string
+	ContainerID    string
+	HostIface      *current.Interface
+	ContainerIface *current.Interface
+	Ips            []*current.IPConfig
+}
+
+type OVSPortParamInternal struct {
+	PodName        string            `json:",omitempty"`
+	PodNameSpace   string            `json:",omitempty"`
+	ContainerID    string            `json:",omitempty"`
+	HostIface      current.Interface `json:",omitempty"`
+	ContainerIface current.Interface `json:",omitempty"`
+	Ips            []string          `json:",omitempty"`
+}
+
+func PersistOVSPortParam(
+	podName string,
+	podNameSpace string,
+	containerID string,
+	hostIface *current.Interface,
+	containerIface *current.Interface,
+	ips []*current.IPConfig) error {
+	ipsString := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		ipStr, err := ip.MarshalJSON()
+		if err != nil {
+			return nil
+		}
+		ipsString = append(ipsString, string(ipStr))
+	}
+	ovsPortParam := OVSPortParamInternal{
+		PodName:        podName,
+		PodNameSpace:   podNameSpace,
+		ContainerID:    containerID,
+		HostIface:      *hostIface,
+		ContainerIface: *containerIface,
+		Ips:            ipsString,
+	}
+	ovsPortParamString, err := json.Marshal(ovsPortParam)
+	if err != nil {
+		return err
+	}
+	ep, err := hcsshim.GetHNSEndpointByName(hostIface.Name)
+	if err != nil {
+		return err
+	}
+	ep.AdditionalParams["OVSPortParamInternal"] = string(ovsPortParamString)
+	if _, err = ep.Update(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func LoadOVSPortParam(ep *hcsshim.HNSEndpoint) (*OVSPortParam, error) {
+	paramStr, ok := ep.AdditionalParams["OVSPortParamInternal"]
+	if !ok {
+		return nil, nil
+	}
+	ovsPortParamInternal := OVSPortParamInternal{}
+	if err := json.Unmarshal([]byte(paramStr), &ovsPortParamInternal); err != nil {
+		return nil, err
+	}
+	ovsPortParam := OVSPortParam{
+		PodName:        ovsPortParamInternal.PodName,
+		PodNameSpace:   ovsPortParamInternal.PodNameSpace,
+		ContainerID:    ovsPortParamInternal.ContainerID,
+		HostIface:      &ovsPortParamInternal.HostIface,
+		ContainerIface: &ovsPortParamInternal.ContainerIface,
+	}
+	ipConfigs := make([]*current.IPConfig, 0, len(ovsPortParamInternal.Ips))
+	for _, ipStr := range ovsPortParamInternal.Ips {
+		ipConfig := current.IPConfig{}
+		if err := ipConfig.UnmarshalJSON([]byte(ipStr)); err != nil {
+			return nil, fmt.Errorf("failed to parse IPConfig: %v", err)
+		}
+		ipConfigs = append(ipConfigs, &ipConfig)
+	}
+	return &ovsPortParam, nil
 }

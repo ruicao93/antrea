@@ -448,6 +448,7 @@ func (s *CNIServer) CmdAdd(ctx context.Context, request *cnipb.CniCmdRequest) (*
 		cniConfig.DeviceID,
 		result,
 		isInfraContainer,
+		s.containerAccess,
 	); err != nil {
 		klog.Errorf("Failed to configure interfaces for container %s: %v", cniConfig.ContainerId, err)
 		return s.configInterfaceFailureResponse(err), nil
@@ -571,6 +572,8 @@ func (s *CNIServer) Initialize(
 }
 
 func (s *CNIServer) Run(stopCh <-chan struct{}) {
+	// Create go routines for uncreated OVS ports
+
 	klog.Info("Starting CNI server")
 	defer klog.Info("Shutting down CNI server")
 
