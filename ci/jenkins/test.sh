@@ -34,6 +34,8 @@ WINDOWS_CONFORMANCE_FOCUS="\[sig-network\].+\[Conformance\]|\[sig-windows\]"
 WINDOWS_CONFORMANCE_SKIP="\[LinuxOnly\]|\[Slow\]|\[Serial\]|\[Disruptive\]|\[Flaky\]|\[Feature:.+\]|\[sig-cli\]|\[sig-storage\]|\[sig-auth\]|\[sig-api-machinery\]|\[sig-apps\]|\[sig-node\]|\[Privileged\]|should be able to change the type from|\[sig-network\] Services should be able to create a functioning NodePort service \[Conformance\]|Service endpoints latency should not be very high"
 WINDOWS_NETWORKPOLICY_FOCUS="\[Feature:NetworkPolicy\]"
 WINDOWS_NETWORKPOLICY_SKIP="SKIP_NO_TESTCASE"
+SIG_WINDOWS_FOCUS="\[sig-windows\]"
+SIG_WINDOWS_SKIP="\[Slow\]|\[Distruptive\]|\[sig-storage\]"
 CONFORMANCE_SKIP="\[Slow\]|\[Serial\]|\[Disruptive\]|\[Flaky\]|\[Feature:.+\]|\[sig-cli\]|\[sig-storage\]|\[sig-auth\]|\[sig-api-machinery\]|\[sig-apps\]|\[sig-node\]"
 NETWORKPOLICY_SKIP="should allow egress access to server in CIDR block|should enforce except clause while egress access to server in CIDR block"
 
@@ -41,7 +43,7 @@ NETWORKPOLICY_SKIP="should allow egress access to server in CIDR block|should en
 CONTROL_PLANE_NODE_ROLE="master"
 
 _usage="Usage: $0 [--kubeconfig <KubeconfigSavePath>] [--workdir <HomePath>]
-                  [--testcase <windows-install-ovs|windows-conformance|windows-networkpolicy|e2e|conformance|networkpolicy>]
+                  [--testcase <windows-install-ovs|windows-conformance|windows-networkpolicy|sig-windows|e2e|conformance|networkpolicy>]
 
 Run K8s e2e community tests (Conformance & Network Policy) or Antrea e2e tests on a remote (Jenkins) Windows or Linux cluster.
 
@@ -191,7 +193,7 @@ function deliver_antrea_windows {
         pull_antrea_ubuntu_image
     fi
     DOCKER_REGISTRY="${DOCKER_REGISTRY}" make
-    if [[ "$TESTCASE" =~ "networkpolicy" ]]; then
+    if [[ "$TESTCASE" =~ "networkpolicy" || "$TESTCASE" == "sig-windows" ]]; then
         make windows-bin
     fi
 
@@ -220,7 +222,7 @@ function deliver_antrea_windows {
         done
 
         # Use a script to run antrea agent in windows Network Policy cases
-        if [ "$TESTCASE" == "windows-networkpolicy" ]; then
+        if [[ "$TESTCASE" == "windows-networkpolicy" || "$TESTCASE" == "sig-windows" ]]; then
             for i in `seq 24`; do
                 sleep 5
                 ssh -o StrictHostKeyChecking=no -n Administrator@${IP} "W32tm /resync /force" | grep successfully && break
@@ -420,6 +422,8 @@ function run_conformance_windows {
     export KUBE_TEST_REPO_LIST=${WORKDIR}/repo_list
     if [ "$TESTCASE" == "windows-networkpolicy" ]; then
         ginkgo -p -nodes 8 --seed=1592804472 --noColor $E2ETEST_PATH -- --provider=skeleton --ginkgo.focus="$WINDOWS_NETWORKPOLICY_FOCUS" --ginkgo.skip="$WINDOWS_NETWORKPOLICY_SKIP" > windows_conformance_result_no_color.txt || true
+    elif [ "$TESTCASE" == "sig-windows" ]; then
+        ginkgo --noColor $E2ETEST_PATH -- --provider=skeleton --node-os-distro=windows --ginkgo.focus="$SIG_WINDOWS_FOCUS" --ginkgo.skip="$SIG_WINDOWS_SKIP" > windows_conformance_result_no_color.txt || true
     else
         ginkgo --noColor $E2ETEST_PATH -- --provider=skeleton --node-os-distro=windows --ginkgo.focus="$WINDOWS_CONFORMANCE_FOCUS" --ginkgo.skip="$WINDOWS_CONFORMANCE_SKIP" > windows_conformance_result_no_color.txt || true
     fi
