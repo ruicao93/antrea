@@ -29,6 +29,7 @@ TEST_FAILURE=false
 MODE="report"
 DOCKER_REGISTRY=$(head -n1 "${WORKSPACE}/ci/docker-registry")
 IMAGE_PULL_POLICY="Always"
+SKIP_BUILD="false"
 
 WINDOWS_CONFORMANCE_FOCUS="\[sig-network\].+\[Conformance\]|\[sig-windows\]"
 WINDOWS_CONFORMANCE_SKIP="\[LinuxOnly\]|\[Slow\]|\[Serial\]|\[Disruptive\]|\[Flaky\]|\[Feature:.+\]|\[sig-cli\]|\[sig-storage\]|\[sig-auth\]|\[sig-api-machinery\]|\[sig-apps\]|\[sig-node\]|\[Privileged\]|should be able to change the type from|\[sig-network\] Services should be able to create a functioning NodePort service \[Conformance\]|Service endpoints latency should not be very high"
@@ -79,6 +80,10 @@ case $key in
     ;;
     --registry)
     DOCKER_REGISTRY="$2"
+    shift 2
+    ;;
+    --skip-build)
+    SKIP_BUILD="$2"
     shift 2
     ;;
     -h|--help)
@@ -186,15 +191,19 @@ function deliver_antrea_windows {
     export PATH=${GOROOT}/bin:$PATH
 
     git show --numstat
-    make clean
-    docker images | grep 'antrea-ubuntu' | awk '{print $3}' | xargs -r docker rmi || true
-    docker images | grep '<none>' | awk '{print $3}' | xargs -r docker rmi || true
-    if [[ "$DOCKER_REGISTRY" != "" ]]; then
-        pull_antrea_ubuntu_image
-    fi
-    DOCKER_REGISTRY="${DOCKER_REGISTRY}" make
-    if [[ "$TESTCASE" =~ "networkpolicy" || "$TESTCASE" == "sig-windows" ]]; then
-        make windows-bin
+    if [[ $SKIP_BUILD == "true" ]]; then
+      echo "====== Skip build ======"
+    else
+      make clean
+      docker images | grep 'antrea-ubuntu' | awk '{print $3}' | xargs -r docker rmi || true
+      docker images | grep '<none>' | awk '{print $3}' | xargs -r docker rmi || true
+      if [[ "$DOCKER_REGISTRY" != "" ]]; then
+          pull_antrea_ubuntu_image
+      fi
+      DOCKER_REGISTRY="${DOCKER_REGISTRY}" make
+      if [[ "$TESTCASE" =~ "networkpolicy" || "$TESTCASE" == "sig-windows" ]]; then
+          make windows-bin
+      fi
     fi
 
     echo "====== Delivering Antrea to all the Nodes ======"
@@ -202,6 +211,10 @@ function deliver_antrea_windows {
     export_govc_env_var
 
     cp -f build/yamls/*.yml $WORKDIR
+    if [[ $SKIP_BUILD == "true" ]]; then
+      echo "====== Skip build ======"
+      return
+    fi
     docker save -o antrea-ubuntu.tar projects.registry.vmware.com/antrea/antrea-ubuntu:latest
 
     echo "===== Deliver Antrea to Linux nodes ====="
