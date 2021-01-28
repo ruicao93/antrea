@@ -53,6 +53,7 @@ func GetHostInterfaceStatus(ifaceName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	klog.Infof("cmd: %s, res: %s", cmd, out)
 	return strings.TrimSpace(out), nil
 }
 
@@ -60,6 +61,9 @@ func IsHostInterfaceUp(ifaceName string) (bool, error) {
 	status, err := GetHostInterfaceStatus(ifaceName)
 	if err != nil {
 		return false, err
+	}
+	if strings.EqualFold(status, "Up") {
+		klog.Infof(status)
 	}
 	return strings.EqualFold(status, "Up"), nil
 }
@@ -89,6 +93,8 @@ func EnableHostInterface(ifaceName string) error {
 	}); err != nil {
 		return fmt.Errorf("failed to enable interface %s: %v", ifaceName, err)
 	}
+	ifList, _ := CallPSCommand("Get-NetAdapter")
+	klog.Infof("%s", ifList)
 	klog.Infof("It takes %v to wait interface %s up", time.Since(start), ifaceName)
 	return nil
 }
@@ -113,6 +119,8 @@ func ConfigureInterfaceAddressWithDefaultGateway(ifaceName string, ipConfig *net
 	err := InvokePSCommand(cmd)
 	// If the address already exists, ignore the error.
 	if err != nil && !strings.Contains(err.Error(), "already exists") {
+		ifList, _ := CallPSCommand("Get-NetAdapter")
+		klog.Infof("%s", ifList)
 		return err
 	}
 	return nil
