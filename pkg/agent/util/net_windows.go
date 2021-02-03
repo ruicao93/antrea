@@ -58,6 +58,9 @@ func GetHostInterfaceStatus(ifaceName string) (string, error) {
 
 // EnableHostInterface sets the specified interface status as UP.
 func EnableHostInterface(ifaceName string) error {
+	waitTime := 8 * time.Second
+	klog.Infof("Wait %v before enable adapter", waitTime)
+	time.Sleep(waitTime)
 	cmd := fmt.Sprintf(`Enable-NetAdapter -InterfaceAlias "%s"`, ifaceName)
 	// Enable-NetAdapter is not a blocking operation based on our testing.
 	// It returns immediately no matter whether the interface has been enabled or not.
