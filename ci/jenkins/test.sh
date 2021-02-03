@@ -201,7 +201,7 @@ function deliver_antrea_windows {
           pull_antrea_ubuntu_image
       fi
       DOCKER_REGISTRY="${DOCKER_REGISTRY}" make
-      if [[ "$TESTCASE" =~ "networkpolicy" || "$TESTCASE" == "sig-windows" ]]; then
+      if [[ "$TESTCASE" =~ "networkpolicy" || "$TESTCASE" == "sig-windows"  || "$TESTCASE" == "windows-conformance" ]]; then
           make windows-bin
       fi
     fi
@@ -235,7 +235,7 @@ function deliver_antrea_windows {
         done
 
         # Use a script to run antrea agent in windows Network Policy cases
-        if [[ "$TESTCASE" == "windows-networkpolicy" || "$TESTCASE" == "sig-windows" ]]; then
+        if [[ "$TESTCASE" == "windows-networkpolicy" || "$TESTCASE" == "sig-windows" || "$TESTCASE" == "windows-conformance" ]]; then
             for i in `seq 24`; do
                 sleep 5
                 ssh -o StrictHostKeyChecking=no -n Administrator@${IP} "W32tm /resync /force" | grep successfully && break
@@ -399,7 +399,7 @@ function run_conformance_windows {
     export PATH=$GOROOT/bin:$PATH
     export KUBECONFIG=$KUBECONFIG_PATH
 
-    if [[ "$TESTCASE" == "windows-conformance" ]]; then
+    if [[ "$TESTCASE" == "windows-conformance222" ]]; then
         clean_for_windows_install_cni
         kubectl apply -f build/yamls/antrea.yml
         kubectl apply -f ${WORKDIR}/kube-proxy-windows.yml
