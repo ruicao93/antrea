@@ -17,6 +17,9 @@
 .PARAMETER OutPutFile
     Specifies the output file path.
 
+.PARAMETER ExtractCertificate
+    Specifies if extract certificate from driver file.
+
 .EXAMPLE
     The example below does blah
     PS C:\> .\Get-NSXOVS.ps1
@@ -26,7 +29,8 @@ Param(
     [parameter(Mandatory = $false)] [string] $DownloadDir,
     [parameter(Mandatory = $false)] [string] $OVSUrl,
     [parameter(Mandatory = $false)] [string] $VCRedistUrl,
-    [parameter(Mandatory = $false)] [string] $OutPutFile = "ovs-win64.zip"
+    [parameter(Mandatory = $false)] [string] $OutPutFile="ovs-win64.zip",
+    [parameter(Mandatory = $false)] [boolean] $ExtractCertificate=$false
 )
 $ErrorActionPreference = "Stop"
 
@@ -88,14 +92,24 @@ Log "Extracting $VCRedistZip to $DownloadDir"
 Expand-Archive -Path $VCRedistZip -DestinationPath $TempDir | Out-Null
 
 # Reorganize OVS directory to keep the dir structure same with upstream OVS
-$OVSDir = "$TempDir/openvswitch"
-$OVSDriverDir = "$OVSDir/driver"
-$VCRedistDir = "$OVSDir/redist"
+$OVSDir = "$TempDir\openvswitch"
+$OVSDriverDir = "$OVSDir\driver"
+$VCRedistDir = "$OVSDir\redist"
 Move-Item $TempDir\include $OVSDir
 Move-Item $TempDir\lib $OVSDir
 Move-Item $TempDir\scripts $OVSDir
 Move-Item $TempDir\vcredist2017 $VCRedistDir
 Move-Item $TempDir\ovsext\win10_x64 $OVSDriverDir
+
+
+# Extract driver certificate
+$CertificateFile="$OVSDriverDir\package.cer"
+if ($ExtractCertificate -and !(Test-Path -Path $CertificateFile)) {
+    $DriverFile="$OVSDriverDir\OVSExt.sys"
+    $ExportType = [System.Security.Cryptography.X509Certificates.X509ContentType]::Cert;
+    $Cert = (Get-AuthenticodeSignature $DriverFile).SignerCertificate;
+    [System.IO.File]::WriteAllBytes($CertificateFile, $Cert.Export($ExportType));
+}
 
 # Generate new OVS zip
 Log "Generating new OVS zip file: $OutPutFile"
